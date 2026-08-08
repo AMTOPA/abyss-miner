@@ -1,4 +1,5 @@
 // ---------- 游戏核心类型与配置 ----------
+import type { Difficulty, EquipmentInstance, ShopStock } from "./items";
 
 export type OreId = "stone" | "copper" | "iron" | "silver" | "gold" | "diamond" | "crystal" | "unknown";
 
@@ -67,7 +68,7 @@ export type UpgradeDef = {
 export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
   drill:     { id: "drill",     name: "钻机",     desc: "耐久上限提升 · 损耗降低 · 超载收益提高", icon: "🔩", baseCost: 70,  maxLevel: 12 },
   safety:    { id: "safety",    name: "安全装备", desc: "灾难损失降低 · 紧急撤退成功率提高",         icon: "🛡️", baseCost: 90, maxLevel: 12 },
-  backpack:  { id: "backpack",  name: "背包",     desc: "容量提升 · 超载容忍度提高",                 icon: "🎒", baseCost: 80, maxLevel: 12 },
+  backpack:  { id: "backpack",  name: "背包",     desc: "每级 +1 背包格（升级价格较高）",            icon: "🎒", baseCost: 160, maxLevel: 12 },
   detection: { id: "detection", name: "探测设备", desc: "探测器次数增加 · 信息更精确",               icon: "📡", baseCost: 95, maxLevel: 12 },
   support:   { id: "support",   name: "支撑装备", desc: "支撑架数量增加 · 效果增强",                 icon: "🪨", baseCost: 110, maxLevel: 12 },
 };
@@ -94,10 +95,15 @@ export function safetyStats(level: number) {
 }
 
 export function backpackStats(level: number) {
+  // v2：背包升级 = 每级 +1 格子（初始 5 格）；装备/增益可再增加
   return {
-    capacity: 160 + 25 * level,
-    overloadTolerance: 0.1 + 0.02 * level, // 超载多少比例内无额外惩罚
+    slots: 5 + level,
   };
+}
+
+export function backpackUpgradeCost(level: number): number {
+  // 升级背包价格较高：160 起步 ×1.6 递增
+  return Math.round(160 * Math.pow(1.6, level));
 }
 
 export function detectionStats(level: number) {
@@ -124,30 +130,54 @@ export function checkpointCost(depth: number): number {
   return Math.round(depth * 0.6);
 }
 
-// ---------- 存档 ----------
+// ---------- 存档（v2） ----------
+
+export type DailyProgress = { date: string; tasks: Record<string, number>; claimed: Record<string, boolean> };
 
 export type SaveData = {
+  version: number;
   cash: number;
   upgrades: Record<UpgradeId, number>;
   unlockedCheckpoints: number[];
+  // v2：仓库（撤离的矿石不直接变现，存入仓库）
+  warehouseOres: Record<string, number>;       // key `${oreId}:${quality}` -> 数量
+  warehouseItems: Record<string, number>;      // 消耗品 itemId -> 数量
+  warehouseEquipment: EquipmentInstance[];     // 拥有的装备
+  equipped: Partial<Record<"drill" | "pack" | "armor" | "detector" | "charm", string>>; // uid -> 已装备
+  shop: { date: string; stock: ShopStock[] };  // 每日刷新商店
+  favor: number;                               // 黑市好感 0..5（跨局）
+  difficultyUnlocked: Difficulty[];
+  daily: DailyProgress;                        // 每日任务进度（好感度来源）
   stats: {
     runs: number;
     totalBanked: number;
     bestRunValue: number;
     bestDepth: number;
     disasters: number;
+    totalMined: number;
+    totalSells: number;
+    creaturesScared: number;
   };
   settings: { muted: boolean };
 };
 
-export const SAVE_KEY = "abyss_miner_save_v1";
+export const SAVE_KEY = "abyss_miner_save_v2";
 
 export function defaultSave(): SaveData {
   return {
+    version: 2,
     cash: 0,
     upgrades: { drill: 0, safety: 0, backpack: 0, detection: 0, support: 0 },
     unlockedCheckpoints: [0],
-    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0 },
+    warehouseOres: {},
+    warehouseItems: {},
+    warehouseEquipment: [],
+    equipped: {},
+    shop: { date: "", stock: [] },
+    favor: 0,
+    difficultyUnlocked: ["mild", "normal"],
+    daily: { date: "", tasks: {}, claimed: {} },
+    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0 },
     settings: { muted: false },
   };
 }
@@ -156,9 +186,38 @@ export function loadSave(): SaveData {
   if (typeof window === "undefined") return defaultSave();
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return defaultSave();
+    // v1 存档迁移：保留现金/升级/检查点/统计/设置
+    if (!raw) {
+      const legacy = window.localStorage.getItem("abyss_miner_save_v1");
+      if (legacy) {
+        const p = JSON.parse(legacy);
+        return {
+          ...defaultSave(),
+          cash: p.cash ?? 0,
+          upgrades: { ...defaultSave().upgrades, ...(p.upgrades ?? {}) },
+          unlockedCheckpoints: Array.isArray(p.unlockedCheckpoints) ? p.unlockedCheckpoints : [0],
+          stats: { ...defaultSave().stats, ...(p.stats ?? {}) },
+          settings: { muted: !!p.settings?.muted },
+        };
+      }
+      return defaultSave();
+    }
     const parsed = JSON.parse(raw);
-    return { ...defaultSave(), ...parsed, upgrades: { ...defaultSave().upgrades, ...(parsed.upgrades ?? {}) } };
+    return {
+      ...defaultSave(),
+      ...parsed,
+      upgrades: { ...defaultSave().upgrades, ...(parsed.upgrades ?? {}) },
+      unlockedCheckpoints: Array.isArray(parsed.unlockedCheckpoints) ? parsed.unlockedCheckpoints : [0],
+      warehouseOres: parsed.warehouseOres ?? {},
+      warehouseItems: parsed.warehouseItems ?? {},
+      warehouseEquipment: parsed.warehouseEquipment ?? [],
+      equipped: parsed.equipped ?? {},
+      shop: parsed.shop ?? { date: "", stock: [] },
+      daily: parsed.daily ?? { date: "", tasks: {}, claimed: {} },
+      difficultyUnlocked: parsed.difficultyUnlocked ?? ["mild", "normal"],
+      stats: { ...defaultSave().stats, ...(parsed.stats ?? {}) },
+      settings: { muted: !!parsed.settings?.muted },
+    };
   } catch {
     return defaultSave();
   }

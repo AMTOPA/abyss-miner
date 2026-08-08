@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { SaveData, UPGRADES, UpgradeId, fmt, persistSave, upgradeCost } from "@/game/config";
 import { drillStats, safetyStats, backpackStats, detectionStats, supportStats } from "@/game/config";
@@ -21,7 +21,7 @@ function effectText(id: UpgradeId, level: number): string {
     }
     case "backpack": {
       const s = backpackStats(level);
-      return `容量 ${s.capacity} · 超载容忍 +${Math.round(s.overloadTolerance * 100)}%`;
+      return `容量 ${s.slots} 格`;
     }
     case "detection": {
       const s = detectionStats(level);

@@ -135,7 +135,7 @@ async function completeRound(depthBefore) {
 // 回到主菜单（撤退被封锁时先继续钻一层解锁）
 async function backToHome(maxTries = 8) {
   for (let t = 0; t < maxTries; t++) {
-    if ((await page.locator(".home-screen").count()) > 0) return true;
+    if ((await page.locator(".lobby-tabs").count()) > 0) return true;
     // 结束面板（灾难 / 安全返回）
     if (
       (await page.locator(".end-panel", { hasText: "灾难" }).count()) > 0 ||
@@ -175,19 +175,15 @@ async function backToHome(maxTries = 8) {
     }
     await sleep(300);
   }
-  return (await page.locator(".home-screen").count()) > 0;
+  return (await page.locator(".lobby-tabs").count()) > 0;
 }
 
 // 从 0m 重新开始一轮
 async function startRun0() {
-  if ((await page.locator(".home-screen").count()) === 0) {
+  if ((await page.locator(".lobby-tabs").count()) === 0) {
     if (!(await backToHome(5))) return false;
   }
-  const start = page.getByRole("button", { name: /开始下矿/ });
-  if ((await start.count()) === 0) return false;
-  await start.click();
-  await sleep(300);
-  const go = page.getByRole("button", { name: "出发！" });
+  const go = page.getByRole("button", { name: /出发！/ });
   if ((await go.count()) === 0) return false;
   await go.click();
   return true;
@@ -212,18 +208,16 @@ await page.evaluate(() => {
     stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0 },
     settings: { muted: true },
   };
-  localStorage.setItem("abyss_miner_save_v1", JSON.stringify(save));
+  localStorage.setItem("abyss_miner_save_v2", JSON.stringify(save));
 });
 await page.reload({ waitUntil: "networkidle" });
 await page.waitForTimeout(600);
-const cashText = await page.locator(".home-stats .stat-card").first().textContent();
+const cashText = await page.locator(".lobby-cash").first().textContent();
 ok("save injected cash 5000", (cashText || "").includes("5,000") || (cashText || "").includes("5000"), cashText);
 
 // ---------- 2. 从 0m 出发，进入观察界面 ----------
-ok("start button present", (await page.getByRole("button", { name: /开始下矿/ }).count()) === 1);
-await page.getByRole("button", { name: /开始下矿/ }).click();
-await sleep(300);
-const go = page.getByRole("button", { name: "出发！" });
+ok("start button present", (await page.getByRole("button", { name: /出发！/ }).count()) === 1);
+const go = page.getByRole("button", { name: /出发！/ });
 ok("go button present", (await go.count()) === 1);
 await go.click();
 ok("entered observe", await waitObserve(8000));
@@ -350,7 +344,7 @@ ok("no page/console errors", errs.length === 0, errs.length ? errs.join(" | ") :
 
 // ---------- 5. 返回主菜单 ----------
 const wentHome = await backToHome(8);
-ok("back to main menu (home-screen)", wentHome);
+ok("back to main menu (lobby)", wentHome);
 
 console.log("=== RESULTS ===");
 console.log(results.join("\n"));

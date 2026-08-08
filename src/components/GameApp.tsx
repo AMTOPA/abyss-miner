@@ -1,10 +1,10 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { SaveData, loadSave, persistSave, fmt } from "@/game/config";
+import { SaveData, loadSave, persistSave } from "@/game/config";
+import { RunConfig, RunResult } from "@/game/types";
 import { AudioEngine } from "@/game/audio";
-import { RunResult } from "@/game/engine";
-import HomeScreen from "./HomeScreen";
+import LobbyScreen from "./LobbyScreen";
 import RunScreen from "./RunScreen";
 import UpgradeScreen from "./UpgradeScreen";
 import LeaderboardScreen from "./LeaderboardScreen";
@@ -17,6 +17,7 @@ export default function GameApp() {
   const [save, setSave] = useState<SaveData>(() => loadSave());
   const [inRun, setInRun] = useState(false);
   const [runStartDepth, setRunStartDepth] = useState(0);
+  const [runConfig, setRunConfig] = useState<RunConfig | null>(null);
   const [showUpgrades, setShowUpgrades] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -30,7 +31,7 @@ export default function GameApp() {
   const audioRef = useRef<AudioEngine | null>(null);
   if (!audioRef.current) audioRef.current = new AudioEngine();
 
-  // ?????????????? localStorage ??? SSR ?????
+  // 避免 SSR 下读取 localStorage
   const [ready, setReady] = useState(false);
   useEffect(() => setReady(true), []);
 
@@ -40,6 +41,7 @@ export default function GameApp() {
     const s = loadSave();
     s.settings.muted = muted;
     persistSave(s);
+    setSave(s);
   }, [muted]);
 
   useEffect(() => {
@@ -56,8 +58,9 @@ export default function GameApp() {
 
   const showToast = useCallback((msg: string) => setToast(msg), []);
 
-  const startRun = useCallback((depth: number) => {
+  const startRun = useCallback((depth: number, config: RunConfig) => {
     setRunStartDepth(depth);
+    setRunConfig(config);
     setSubmitState("idle");
     setPendingScore(null);
     setInRun(true);
@@ -67,7 +70,6 @@ export default function GameApp() {
   const handleRunEnd = useCallback(
     async (result: RunResult) => {
       setSave(result.save);
-      // ?? RunScreen ????????????????????? onExit ?????
       if (result.kind === "surfaced" && result.banked > 0) {
         setPendingScore({ value: result.banked, depth: result.depth });
         if (user) {
@@ -130,8 +132,8 @@ export default function GameApp() {
     return (
       <main className="game-root">
         <div className="splash">
-          <div className="splash-gem">??</div>
-          <div className="splash-text">????</div>
+          <div className="splash-gem">💎</div>
+          <div className="splash-text">深渊矿工</div>
         </div>
       </main>
     );
@@ -139,10 +141,11 @@ export default function GameApp() {
 
   return (
     <main className="game-root">
-      {inRun ? (
+      {inRun && runConfig ? (
         <RunScreen
           save={save}
           startDepth={runStartDepth}
+          runConfig={runConfig}
           audio={audioRef.current!}
           user={user}
           muted={muted}
@@ -152,11 +155,13 @@ export default function GameApp() {
           onRunEnd={handleRunEnd}
           onExit={() => {
             setInRun(false);
+            setRunConfig(null);
+            setSave(loadSave());
             audioRef.current?.play("click");
           }}
         />
       ) : (
-        <HomeScreen
+        <LobbyScreen
           save={save}
           user={user}
           muted={muted}
@@ -173,6 +178,10 @@ export default function GameApp() {
           onLogin={() => openAuth("login")}
           onRegister={() => openAuth("register")}
           onLogout={handleLogout}
+          onSave={(next) => {
+            setSave(next);
+            persistSave(next);
+          }}
         />
       )}
 

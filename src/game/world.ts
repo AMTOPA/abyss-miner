@@ -1,4 +1,5 @@
-﻿import { ORES, OreId, StageId, STAGES, baseOreValue, stageForDepth } from "./config";
+import { ORES, OreId, StageId, STAGES, baseOreValue, stageForDepth } from "./config";
+import type { OreQuality } from "./items";
 
 export type VeinQuality = "barren" | "normal" | "rich" | "legendary";
 
@@ -35,6 +36,16 @@ export type Layer = {
   anomalyEffect: string | null;
 };
 
+// ---------- v2：层品质决定矿石品质分布 ----------
+// 层品质不再乘价值倍率，而是决定掉落矿石的 4 品质权重：
+// barren 偏劣质 → normal 均衡 → rich 多优良 → legendary 优良/传奇为主
+export const QUALITY_DIST: Record<VeinQuality, Array<[OreQuality, number]>> = {
+  barren:    [["poor", 9], ["normal", 1]],
+  normal:    [["poor", 2], ["normal", 6], ["fine", 2]],
+  rich:      [["normal", 2], ["fine", 7], ["legendary", 1]],
+  legendary: [["fine", 6], ["legendary", 4]],
+};
+
 const QUALITY_WEIGHTS: Array<[VeinQuality, number]> = [
   ["legendary", 1],
   ["rich", 3],
@@ -50,6 +61,17 @@ function pickWeighted<T>(entries: Array<[T, number]>): T {
     if (r <= 0) return v;
   }
   return entries[0][0];
+}
+
+export function pickQuality(vein: VeinQuality): OreQuality {
+  return pickWeighted(QUALITY_DIST[vein]);
+}
+
+// 品质提升一档（qualityBonus 触发时使用），传奇封顶
+export function upgradeQuality(q: OreQuality): OreQuality {
+  const order: OreQuality[] = ["poor", "normal", "fine", "legendary"];
+  const i = order.indexOf(q);
+  return order[Math.min(order.length - 1, i + 1)];
 }
 
 function qualityForDepth(depth: number): VeinQuality {
@@ -246,21 +268,16 @@ export function pickOre(pool: OreId[]): OreId {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-export type OreYield = { id: OreId; value: number; count?: number };
+// v2：单矿产出（含品质）。数量倍率（mode/combo/难度/损耗）由引擎按产出聚合。
+export type OreYield = { id: OreId; quality: OreQuality };
 
-export function rollOreYield(depth: number, pool: OreId[], quality: VeinQuality, modeMult: number, combo: number, countOverride?: number): OreYield[] {
+export function rollOreYield(depth: number, pool: OreId[], quality: VeinQuality, countOverride?: number): OreYield[] {
   const count = countOverride ?? layerAmount(quality);
   const out: OreYield[] = [];
   for (let i = 0; i < count; i++) {
-    const id = pickOre(pool);
-    const value = baseOreValue(depth) * ORES[id].mult * VEIN_MULT[quality] * modeMult * combo;
-    out.push({ id, value });
+    out.push({ id: pickOre(pool), quality: pickQuality(quality) });
   }
   return out;
-}
-
-export function layerBaseValue(yields: OreYield[]): number {
-  return yields.reduce((s, y) => s + y.value, 0);
 }
 
 export function hazardName(h: HazardId): string {

@@ -1,68 +1,32 @@
-﻿import {
-  ORES, OreId, SaveData, StageId,
-  backpackStats, detectionStats, drillStats,
+import {
+  CHECKPOINTS, ORES, backpackStats, detectionStats, drillStats,
   fmt, fmtCombo, persistSave, safetyStats, stageForDepth, supportStats,
 } from "./config";
+import type { OreId, SaveData } from "./config";
 import {
-  HazardId, Layer, VEIN_NAME, generateLayer, hazardName, layerBaseValue, rollOreYield,
+  Layer, VEIN_NAME, generateLayer, hazardName, rollOreYield, upgradeQuality,
 } from "./world";
+import {
+  CONSUMABLES, DIFFICULTY_DEFS, EMPTY_EQUIP_STATS, EQUIPMENT_DEFS,
+  ORE_QUALITIES, blackBuyDiscount, blackMarketRepairCost, blackSellRatio,
+  computeRating, dailyTasks, dateKey, generateBmStock, makeEquipmentInstance,
+  mergeEquipStats, oreStackKey, oreUnitValue as oreUnitValueBase,
+} from "./items";
+import type {
+  BmStockItem, BuffId, Difficulty, EquipmentStats, OreQuality,
+} from "./items";
+import type {
+  BagSlot, BlackMarketView, DailyTaskView, EngineCallbacks, LogEntry,
+  RunConfig, RunPhase, RunResult, UiSnapshot,
+} from "./types";
 import { AudioEngine } from "./audio";
 
+// ---------- 兼容导出：UI 契约来自 types.ts，这里再导出便于过渡期引用 ----------
+export type { UiSnapshot, RunConfig, RunResult, BagSlot, BlackMarketView, EngineCallbacks, LogEntry, RunPhase } from "./types";
+
 export type DrillMode = "cautious" | "standard" | "overload";
-export type Phase = "idle" | "descending" | "observe" | "drilling" | "result" | "hazard" | "anomaly" | "gameover" | "surfaced";
+export type Phase = RunPhase;
 export type RunEndKind = "surfaced" | "disaster";
-
-export type LogEntry = { text: string; kind: "info" | "good" | "bad" | "warn" };
-export type BackpackItem = { id: OreId; name: string; count: number; color: string; value: number };
-
-export type UiSnapshot = {
-  phase: Phase;
-  depth: number;
-  stageName: string;
-  power: number; maxPower: number;
-  durability: number; maxDurability: number;
-  overheat: number;
-  combo: number;
-  supports: number;
-  detectors: number;
-  capacity: number;
-  load: number;
-  loadRatio: number;
-  backpack: BackpackItem[];
-  layer: {
-    signals: string[];
-    hardnessText: string;
-    qualityText: string;
-    hazardText: string | null;
-    collapseRiskLabel: string;
-    revealed: boolean;
-    anomalyEffect: string | null;
-    milkingAvailable: boolean;
-    milkCount: number;
-    stage: StageId;
-  } | null;
-  result: {
-    ores: BackpackItem[];
-    value: number;
-    comboDelta: number;
-    events: string[];
-    canMilk: boolean;
-    milkRewardMult: number | null;
-    layers: number;
-  } | null;
-  hazard: { type: "creature"; severity: number } | null;
-  anomaly: { text: string } | null;
-  gameover: { reason: string; lost: number; saved: number; depth: number; best: boolean } | null;
-  surfaced: { banked: number; depth: number; totalBanked: number; best: boolean } | null;
-  retreatBlocked: boolean;
-  log: LogEntry[];
-  drilling: { progress: number; mode: DrillMode; hardness: number } | null;
-  canDrill: boolean;
-};
-
-export type RunResult = { kind: RunEndKind; banked: number; depth: number; best: boolean; save: SaveData };
-
-export type EngineCallbacks = { onUi: (snap: UiSnapshot) => void; onRunEnd: (result: RunResult) => void };
 
 const MILK_MULT = [1, 1.5, 2.2, 3.5];
 const MILK_RISK = [0.1, 0.2, 0.35, 0.55];
@@ -72,6 +36,8 @@ const PENETRATE_BASE: Record<DrillMode, number> = { cautious: 0.04, standard: 0.
 const PENETRATE_DECAY = 0.55;
 const PENETRATE_CAP = 10;
 
+// 黑市固定出现点（检查点层）
+const BM_DEPTHS = [100, 300, 600, 1000];
 
 // 可复现随机（用于画面装饰，保证同一层不闪烁）
 export function mulberry32(seed: number) {
@@ -93,32 +59,48 @@ type Particle = {
 
 type FloatText = { x: number; y: number; text: string; color: string; life: number; maxLife: number; size: number };
 
+type GainedOre = { id: OreId; quality: OreQuality; count: number };
+
 export class MinerGame {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private audio: AudioEngine;
   private cb: EngineCallbacks;
   private save: SaveData;
+  private config: RunConfig = { difficulty: "normal", pocket: 0, buffs: [], equipment: [], items: [] };
+  private equipStats: EquipmentStats = { ...EMPTY_EQUIP_STATS };
   private raf = 0;
   private lastTime = 0;
   private w = 0;
   private h = 0;
   private dpr = 1;
 
-  phase: Phase = "idle";
+  phase: RunPhase = "idle";
   private depth = 0;
   private layer: Layer | null = null;
   private power = 100;
+  private maxPower = 100;
   private durability = 100;
   private maxDurability = 100;
   private overheat = 0;
   private combo = 1;
   private supports = 0;
   private detectors = 0;
-  private capacity = 100;
-  private backpackCount: Record<OreId, number> = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
-  private oreValue: Record<OreId, number> = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
+  private slots = 5;
+  private bag: BagSlot[] = [];
   private loadValue = 0;
+  private pocket = 0;
+  private difficulty: Difficulty = "normal";
+  private buffs: BuffId[] = [];
+  private gasImmune = false;
+  private shieldActive = false;
+  private pierceBuff = 0;
+  private qualityBonus = 0;
+  private valueBonus = 0;
+  private wearReduce = 0;
+  private banditReduce = 0;
+  private canBlackMarket = false;
+  private bmStock: BmStockItem[] = [];
   private milkCount = 0;
   private supportsUsedThisLayer = false;
   private retreatBlocked = 0;
@@ -126,8 +108,17 @@ export class MinerGame {
   private anomalyDoubleLoss = false;
   private detectorDisabled = false;
   private megaShieldUsed = false;
+  private nextTransparent = false;
+  private banditSeverity = 1;
   private runEnded = false;
+  private minedThisRun = 0;
+  private scaredThisRun = 0;
 
+  private lastResult: UiSnapshot["result"] | null = null;
+  private resultOres: BagSlot[] = [];
+  private gameoverInfo: UiSnapshot["gameover"] | null = null;
+  private surfacedInfo: UiSnapshot["surfaced"] | null = null;
+  private log: LogEntry[] = [];
   private particles: Particle[] = [];
   private floatTexts: FloatText[] = [];
   private shake = 0;
@@ -138,8 +129,6 @@ export class MinerGame {
   private drillProgress = 0;
   private drillMode: DrillMode = "standard";
   private drillDuration = 1;
-  private lastResult: UiSnapshot["result"] | null = null;
-  private log: LogEntry[] = [];
   private oreGlints: Array<{ x: number; y: number; color: string; r: number }> = [];
   private eyes: Array<{ x: number; y: number; phase: number }> = [];
   private wallHole = 0;
@@ -181,11 +170,14 @@ export class MinerGame {
 
   // ---------------- 公共操作 ----------------
 
-  startRun(startDepth: number, save: SaveData): void {
+  startRun(startDepth: number, save: SaveData, config: RunConfig): void {
     this.save = save;
+    this.config = config;
+    this.difficulty = config.difficulty;
+    this.pocket = Math.max(0, config.pocket);
+    this.buffs = [...config.buffs];
     this.depth = startDepth;
     this.depthDisplay = startDepth;
-    this.power = 100;
     this.overheat = 0;
     this.combo = 1;
     this.milkCount = 0;
@@ -194,21 +186,61 @@ export class MinerGame {
     this.anomalyDoubleLoss = false;
     this.detectorDisabled = false;
     this.megaShieldUsed = false;
+    this.nextTransparent = false;
     this.runEnded = false;
-    const ds = drillStats(save.upgrades.drill);
-    this.maxDurability = ds.maxDurability;
-    this.durability = ds.maxDurability;
-    const bs = backpackStats(save.upgrades.backpack);
-    this.capacity = bs.capacity;
-    const ss = supportStats(save.upgrades.support);
-    this.supports = ss.supports;
-    const det = detectionStats(save.upgrades.detection);
-    this.detectors = det.detectors;
-    this.resetBackpack();
+    this.minedThisRun = 0;
+    this.scaredThisRun = 0;
+    this.canBlackMarket = false;
+    this.bmStock = [];
+    this.bag = [];
+    this.loadValue = 0;
+    this.lastResult = null;
+    this.resultOres = [];
+    this.gameoverInfo = null;
+    this.surfacedInfo = null;
     this.particles = [];
     this.floatTexts = [];
     this.log = [];
-    this.layer = generateLayer(startDepth, { accuracy: det.accuracy });
+
+    // 装备加成汇总
+    this.equipStats = mergeEquipStats(...config.equipment.map((e) => EQUIPMENT_DEFS[e.id]?.stats));
+    this.qualityBonus = (this.hasBuff("quality") ? 15 : 0) + this.equipStats.qualityBonus;
+    this.valueBonus = this.equipStats.valueBonus;
+    this.wearReduce = (this.hasBuff("wear_less") ? 30 : 0) + this.equipStats.wearReduce;
+    this.pierceBuff = (this.hasBuff("pierce") ? 5 : 0) + this.equipStats.pierceBonus;
+    this.banditReduce = this.equipStats.banditReduce;
+    this.gasImmune = this.hasBuff("gas");
+    this.shieldActive = this.hasBuff("shield");
+
+    const ds = drillStats(save.upgrades.drill);
+    this.maxDurability = ds.maxDurability;
+    this.durability = ds.maxDurability;
+    this.maxPower = this.hasBuff("fuel") ? 140 : 100;
+    this.power = this.maxPower;
+
+    const bs = backpackStats(save.upgrades.backpack);
+    this.slots = bs.slots + this.equipStats.slotBonus + (this.hasBuff("slots") ? 2 : 0);
+    const ss = supportStats(save.upgrades.support);
+    this.supports = ss.supports;
+    const det = detectionStats(save.upgrades.detection);
+    this.detectors = det.detectors + this.equipStats.detectorBonus;
+
+    // 携带的消耗品入包（格子不够则散落损失）
+    for (const itemId of config.items) {
+      const def = CONSUMABLES[itemId];
+      if (!def || def.kind !== "consumable") continue;
+      if (this.usedSlots() >= this.slots) {
+        this.logAdd(`背包已满，${def.name} 散落损失`, "warn");
+        continue;
+      }
+      this.bag.push({
+        key: "item:" + itemId, kind: "item", id: itemId, count: 1,
+        name: def.name, color: def.color, icon: def.icon, value: 0, unitValue: 0,
+      });
+    }
+
+    const accuracy = Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100);
+    this.layer = this.genLayer(startDepth, accuracy);
     this.applyPreview(det.previewChance);
     this.applyAnomalyOnEntry();
     this.phase = "descending";
@@ -259,28 +291,75 @@ export class MinerGame {
     this.pushUi();
   }
 
+  useItem(slotKey: string): void {
+    if (this.phase !== "observe" && this.phase !== "result" && this.phase !== "blackmarket") return;
+    const idx = this.bag.findIndex((s) => s.key === slotKey);
+    if (idx < 0) return;
+    const slot = this.bag[idx];
+    if (slot.kind !== "item") return;
+    const def = CONSUMABLES[slot.id];
+    if (!def || def.effect === undefined) return;
+    switch (def.effect) {
+      case "repair":
+        this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.4);
+        this.logAdd(`${def.name}：耐久 +40%`, "good");
+        break;
+      case "fuel":
+        this.power = Math.min(this.maxPower, this.power + 40);
+        this.logAdd(`${def.name}：电量 +40`, "good");
+        break;
+      case "shield":
+        this.shieldActive = true;
+        this.logAdd(`${def.name}：已激活，抵挡一次灾难`, "good");
+        break;
+      case "purify":
+        this.gasImmune = true;
+        this.logAdd(`${def.name}：本局免疫毒气`, "good");
+        break;
+      case "pierce":
+        this.pierceBuff += 8;
+        this.logAdd(`${def.name}：穿透概率 +8%`, "good");
+        break;
+    }
+    this.bag.splice(idx, 1);
+    this.audio.play("support");
+    this.pushUi();
+  }
+
+  discardSlot(slotKey: string): void {
+    if (this.phase !== "result" && this.phase !== "observe" && this.phase !== "blackmarket") return;
+    const idx = this.bag.findIndex((s) => s.key === slotKey);
+    if (idx < 0) return;
+    const slot = this.bag[idx];
+    if (slot.kind === "ore") this.loadValue = Math.max(0, this.loadValue - slot.value);
+    this.logAdd(`丢弃 ${slot.name}${slot.kind === "ore" ? " ×" + slot.count : ""}`, "warn");
+    this.bag.splice(idx, 1);
+    this.audio.play("click");
+    this.pushUi();
+  }
+
   retreat(): void {
     if (this.phase !== "observe" && this.phase !== "result") return;
     if (this.retreatBlocked > 0) {
       this.logAdd(`撤退通道被封锁，还需继续 ${this.retreatBlocked} 层`, "bad");
       return;
     }
-    this.finishRun("surfaced");
+    this.finishRun();
   }
 
   emergencyRetreat(): void {
     if (this.phase !== "hazard") return;
     const ss = safetyStats(this.save.upgrades.safety);
-    const overload = this.loadRatio() > 1.15 ? 0.12 : 0;
+    const overload = this.slotRatio() >= 1 ? 0.12 : 0;
     if (Math.random() < ss.retreatSuccess - overload) {
       this.logAdd("紧急撤退成功！", "good");
-      this.finishRun("surfaced");
+      this.finishRun();
     } else {
       const lost = this.removeOreValue(0.15);
       this.durability = Math.max(0, this.durability - 15);
       this.audio.play("accident");
       this.logAdd(`紧急撤退受挫，损失了 ${fmt(lost)} 矿石`, "bad");
-      this.finishRun("surfaced");
+      this.finishRun();
     }
   }
 
@@ -299,6 +378,9 @@ export class MinerGame {
           this.applyAccident("minor");
         } else {
           this.logAdd("驱赶成功，怪物退入黑暗", "good");
+          this.scaredThisRun++;
+          const d = this.ensureDaily();
+          d.tasks.task_creature = (d.tasks.task_creature ?? 0) + 1;
         }
         break;
       }
@@ -322,6 +404,7 @@ export class MinerGame {
         this.emergencyRetreat();
         return;
     }
+    if (this.runEnded) return;
     this.phase = "result";
     this.pushUi();
   }
@@ -335,13 +418,15 @@ export class MinerGame {
     const extraRisk = MILK_RISK[Math.min(idx, MILK_RISK.length - 1)];
     this.power = Math.max(0, this.power - 12);
     this.durability = Math.max(0, this.durability - (6 + 2 * idx));
-    const yields = rollOreYield(this.depth, this.layer.ores, this.layer.quality, mult, this.combo, 2 + Math.floor(Math.random() * 2));
-    const value = layerBaseValue(yields);
-    this.addOres(yields);
+    const baseCount = 2 + Math.floor(Math.random() * 2);
+    const yields = rollOreYield(this.depth, this.layer.ores, this.layer.quality, baseCount);
+    const gained = this.scaleYields(yields, mult, this.combo);
+    const added = this.addOresToBag(gained, []);
+    const value = added.reduce((s, a) => s + this.oreUnitValue(a.id, a.quality) * a.count, 0);
     this.milkCount++;
     this.audio.play("milking");
     this.logAdd(`榨取矿脉 +${fmt(value)}（第 ${this.milkCount} 次）`, "good");
-    const risk = Math.min(0.85, this.baseRisk() + extraRisk + (this.loadRatio() > 1 ? 0.08 : 0));
+    const risk = Math.min(0.85, this.baseRisk() + extraRisk + (this.slotRatio() >= 1 ? 0.08 : 0));
     if (Math.random() < risk) {
       this.audio.play("warning");
       this.logAdd("榨取时岩层剧烈震动……", "warn");
@@ -351,21 +436,194 @@ export class MinerGame {
     this.pushUi();
   }
 
-  leaveVein(): void { if (this.phase === "result") this.advanceLayer(); }
   continueDescend(): void { if (this.phase === "result") this.advanceLayer(); }
+
   anomalyContinue(): void {
     if (this.phase !== "anomaly") return;
     this.phase = "observe";
     this.pushUi();
   }
 
+  skipDrill(): void {
+    if (this.phase !== "drilling") return;
+    this.drillProgress = 1;
+    this.audio.play("click");
+  }
+
+  // ---------------- 黑市 ----------------
+
+  openBlackMarket(): void {
+    if (this.phase !== "result" || !this.canBlackMarket) return;
+    const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
+    this.bmStock = generateBmStock(this.depth, favor, {
+      sellBoost: this.hasBuff("sell_boost"),
+      discount: this.hasBuff("bm_discount"),
+    });
+    this.phase = "blackmarket";
+    this.audio.play("click");
+    this.pushUi();
+  }
+
+  bmSell(slotKey: string, count: number): void {
+    if (this.phase !== "blackmarket") return;
+    const idx = this.bag.findIndex((s) => s.key === slotKey);
+    if (idx < 0) return;
+    const slot = this.bag[idx];
+    if (slot.kind !== "ore" || slot.quality === undefined) return;
+    const sell = Math.max(1, Math.min(count, slot.count));
+    const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
+    const ratio = blackSellRatio(favor, this.hasBuff("sell_boost"));
+    const cash = Math.round(sell * slot.unitValue * ratio);
+    if (cash <= 0) return;
+    this.pocket += cash;
+    slot.count -= sell;
+    slot.value = slot.count * slot.unitValue;
+    this.loadValue = Math.max(0, this.loadValue - sell * slot.unitValue);
+    if (slot.count <= 0) this.bag.splice(idx, 1);
+    this.save.stats.totalSells += sell;
+    const d = this.ensureDaily();
+    d.tasks.task_sell = (d.tasks.task_sell ?? 0) + sell;
+    this.logAdd(`黑市售出 ${slot.name} ×${sell}，+${fmt(cash)}`, "good");
+    this.audio.play("click");
+    persistSave(this.save);
+    this.pushUi();
+  }
+
+  bmBuy(index: number, pay: "cash" | "ore"): void {
+    if (this.phase !== "blackmarket") return;
+    const item = this.bmStock[index];
+    if (!item) return;
+    if (item.kind === "consumable" && this.usedSlots() >= this.slots) {
+      this.logAdd("背包已满，无法购买", "warn");
+      this.audio.play("warning");
+      return;
+    }
+    if (pay === "cash") {
+      if (this.pocket < item.cashPrice) {
+        this.logAdd("随身现金不足", "bad");
+        return;
+      }
+      this.pocket -= item.cashPrice;
+    } else {
+      const key = oreStackKey(item.oreCost.id, item.oreCost.quality);
+      const slot = this.bag.find((s) => s.key === key);
+      if (!slot || slot.kind !== "ore" || slot.count < item.oreCost.count) {
+        this.logAdd(`缺少 ${ORE_QUALITIES[item.oreCost.quality].name}${ORES[item.oreCost.id].name} ×${item.oreCost.count}`, "bad");
+        return;
+      }
+      slot.count -= item.oreCost.count;
+      slot.value = slot.count * slot.unitValue;
+      this.loadValue = Math.max(0, this.loadValue - item.oreCost.count * slot.unitValue);
+      if (slot.count <= 0) this.bag.splice(this.bag.indexOf(slot), 1);
+    }
+    if (item.kind === "consumable") {
+      this.bag.push({
+        key: "item:" + item.id, kind: "item", id: item.id, count: 1,
+        name: item.name, color: item.color, icon: item.icon, value: 0, unitValue: 0,
+      });
+      this.logAdd(`购入 ${item.name}`, "good");
+    } else {
+      const inst = makeEquipmentInstance(item.id);
+      this.save.warehouseEquipment.push(inst);
+      this.logAdd(`购入装备 ${item.name}（已存入装备仓库）`, "good");
+    }
+    this.audio.play("click");
+    persistSave(this.save);
+    this.pushUi();
+  }
+
+  bmRepair(): void {
+    if (this.phase !== "blackmarket") return;
+    const cost = blackMarketRepairCost(this.maxDurability);
+    if (this.pocket < cost) {
+      this.logAdd("随身现金不足，无法维修", "bad");
+      return;
+    }
+    this.pocket -= cost;
+    this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.4);
+    this.logAdd("黑市维修完成：耐久 +40%", "good");
+    this.audio.play("support");
+    persistSave(this.save);
+    this.pushUi();
+  }
+
+  bmClaimTask(taskId: string): void {
+    if (this.phase !== "blackmarket") return;
+    const daily = this.ensureDaily();
+    const task = dailyTasks(daily.date).find((t) => t.id === taskId);
+    if (!task || daily.claimed[taskId]) return;
+    if ((daily.tasks[taskId] ?? 0) < task.target) return;
+    daily.claimed[taskId] = true;
+    this.save.favor = Math.min(5, this.save.favor + 1);
+    this.logAdd("任务完成！好感 +1", "good");
+    this.audio.play("success");
+    persistSave(this.save);
+    this.pushUi();
+  }
+
+  bmLeave(): void {
+    if (this.phase !== "blackmarket") return;
+    this.phase = "result";
+    this.bmStock = [];
+    this.pushUi();
+  }
+
+  // ---------------- 强盗 ----------------
+
+  banditChoice(action: "pay" | "give" | "fight"): void {
+    if (this.phase !== "bandit") return;
+    const reduce = 1 - this.banditReduce / 100;
+    if (action === "pay") {
+      const cost = Math.round(this.pocket * 0.1 * reduce);
+      this.pocket = Math.max(0, this.pocket - cost);
+      this.logAdd(`强盗勒索：支付 ${fmt(cost)} 现金`, "warn");
+    } else if (action === "give") {
+      const lost = this.removeOreValue(0.12 * reduce);
+      this.logAdd(`强盗抢走价值 ${fmt(lost)} 的矿石`, "bad");
+    } else {
+      if (Math.random() < 0.5) {
+        this.logAdd("你击退了强盗！", "good");
+      } else {
+        const lost = this.removeOreValue(0.25 * reduce);
+        this.logAdd(`战斗失败！损失价值 ${fmt(lost)} 的矿石`, "bad");
+        this.durability = Math.max(0, this.durability - 10);
+      }
+    }
+    this.audio.play("accident");
+    this.phase = "result";
+    this.pushUi();
+  }
   // ---------------- 内部逻辑 ----------------
 
-  private resetBackpack(): void {
-    this.backpackCount = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
-    this.oreValue = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
-    this.loadValue = 0;
-    this.lastResult = null;
+  private hasBuff(id: BuffId): boolean {
+    return this.buffs.includes(id);
+  }
+
+  private usedSlots(): number {
+    return this.bag.length;
+  }
+
+  private slotRatio(): number {
+    return this.slots > 0 ? this.usedSlots() / this.slots : 0;
+  }
+
+  private canMilk(): boolean {
+    return !!this.layer && (this.layer.quality === "rich" || this.layer.quality === "legendary") && this.milkCount < 4;
+  }
+
+  // 损耗惩罚：每损失 25% 耐久 -10% 性能，上限 30%（温和难度不生效）
+  private get wearPenalty(): number {
+    if (!DIFFICULTY_DEFS[this.difficulty].wear) return 0;
+    const lossRatio = 1 - this.durability / Math.max(1, this.maxDurability);
+    return Math.min(0.3, Math.max(0, 0.1 * Math.floor(lossRatio / 0.25)));
+  }
+
+  private oreUnitValue(id: OreId, quality: OreQuality): number {
+    return oreUnitValueBase(this.depth, id, quality) * (1 + this.valueBonus / 100);
+  }
+
+  private oreSlotName(id: OreId, quality: OreQuality): string {
+    return ORE_QUALITIES[quality].name + ORES[id].name;
   }
 
   private logAdd(text: string, kind: LogEntry["kind"] = "info"): void {
@@ -373,12 +631,136 @@ export class MinerGame {
     if (this.log.length > 6) this.log.shift();
   }
 
-  private loadRatio(): number {
-    return this.capacity > 0 ? this.loadValue / this.capacity : 0;
+  // 把产出按 oreId+quality 聚合，数量受 mode/combo/难度收益/损耗惩罚缩放
+  private scaleYields(base: Array<{ id: OreId; quality: OreQuality }>, mult: number, combo: number): GainedOre[] {
+    const diff = DIFFICULTY_DEFS[this.difficulty];
+    let count = Math.round(base.length * mult * combo * diff.incomeMult * (1 - this.wearPenalty));
+    count = Math.max(1, Math.min(99, count));
+    const map = new Map<string, GainedOre>();
+    for (let i = 0; i < count; i++) {
+      const y = base[i % base.length];
+      let q = y.quality;
+      if (this.qualityBonus > 0 && Math.random() * 100 < this.qualityBonus) q = upgradeQuality(q);
+      const key = oreStackKey(y.id, q);
+      const cur = map.get(key);
+      if (cur) cur.count++;
+      else map.set(key, { id: y.id, quality: q, count: 1 });
+    }
+    return [...map.values()];
   }
 
-  private canMilk(): boolean {
-    return !!this.layer && (this.layer.quality === "rich" || this.layer.quality === "legendary") && this.milkCount < 4;
+  // 入包：同 oreId+quality 叠到 99/格，格子不够的部分散落损失
+  private addOreToBag(id: OreId, quality: OreQuality, count: number): number {
+    const key = oreStackKey(id, quality);
+    const unit = this.oreUnitValue(id, quality);
+    let remaining = count;
+    const slot = this.bag.find((s) => s.key === key);
+    if (slot) {
+      const add = Math.min(remaining, 99 - slot.count);
+      slot.count += add;
+      slot.value = slot.count * unit;
+      this.loadValue += add * unit;
+      this.minedThisRun += add;
+      remaining -= add;
+    }
+    while (remaining > 0) {
+      if (this.usedSlots() >= this.slots) break;
+      const add = Math.min(remaining, 99);
+      this.bag.push({
+        key, kind: "ore", id, quality, count: add,
+        name: this.oreSlotName(id, quality),
+        color: ORE_QUALITIES[quality].color,
+        icon: ORE_QUALITIES[quality].icon,
+        value: add * unit, unitValue: unit,
+      });
+      this.loadValue += add * unit;
+      this.minedThisRun += add;
+      remaining -= add;
+    }
+    return remaining;
+  }
+
+  private addOresToBag(gained: GainedOre[], events: string[]): GainedOre[] {
+    const before = new Map<string, number>();
+    for (const s of this.bag) if (s.kind === "ore") before.set(s.key, s.count);
+    let lost = 0;
+    for (const g of gained) {
+      const notAdded = this.addOreToBag(g.id, g.quality, g.count);
+      lost += notAdded;
+    }
+    const addedMap = new Map<string, GainedOre>();
+    for (const s of this.bag) {
+      if (s.kind !== "ore" || s.quality === undefined) continue;
+      const b = before.get(s.key) ?? 0;
+      if (s.count > b) addedMap.set(s.key, { id: s.id as OreId, quality: s.quality, count: s.count - b });
+    }
+    if (lost > 0) {
+      this.logAdd(`背包已满，${lost} 个矿石散落损失`, "warn");
+      events.push(`背包已满：${lost} 个矿石散落损失`);
+    }
+    return [...addedMap.values()];
+  }
+
+  private toBagSlots(added: GainedOre[]): BagSlot[] {
+    return added.map((a) => {
+      const unit = this.oreUnitValue(a.id, a.quality);
+      return {
+        key: oreStackKey(a.id, a.quality),
+        kind: "ore",
+        id: a.id,
+        quality: a.quality,
+        count: a.count,
+        name: this.oreSlotName(a.id, a.quality),
+        color: ORE_QUALITIES[a.quality].color,
+        icon: ORE_QUALITIES[a.quality].icon,
+        value: Math.round(a.count * unit),
+        unitValue: Math.round(unit),
+      };
+    });
+  }
+
+  private mergeBagSlots(list: BagSlot[]): BagSlot[] {
+    const map = new Map<string, BagSlot>();
+    for (const s of list) {
+      const cur = map.get(s.key);
+      if (cur) {
+        cur.count += s.count;
+        cur.value += s.value;
+      } else {
+        map.set(s.key, { ...s });
+      }
+    }
+    return [...map.values()];
+  }
+
+  // 按价值移除矿石（先移除单价最低的堆），返回移除价值
+  private removeOreValue(ratio: number): number {
+    const target = this.loadValue * ratio;
+    let removed = 0;
+    const stacks = this.bag
+      .filter((s) => s.kind === "ore")
+      .sort((a, b) => a.unitValue - b.unitValue);
+    for (const s of stacks) {
+      if (removed >= target) break;
+      const need = target - removed;
+      const take = Math.min(s.count, Math.max(1, Math.floor(need / Math.max(1, s.unitValue))));
+      if (take <= 0) continue;
+      s.count -= take;
+      s.value = s.count * s.unitValue;
+      removed += take * s.unitValue;
+      if (s.count <= 0) this.bag.splice(this.bag.indexOf(s), 1);
+    }
+    this.loadValue = Math.max(0, this.loadValue - removed);
+    return Math.round(removed);
+  }
+
+  private genLayer(depth: number, accuracy: number): Layer {
+    const l = generateLayer(depth, { accuracy });
+    if (this.nextTransparent) {
+      l.revealed = { collapseRisk: l.collapseRisk, quality: l.quality, hazard: l.hazard };
+      this.nextTransparent = false;
+    }
+    return l;
   }
 
   private advanceLayer(): void {
@@ -387,9 +769,12 @@ export class MinerGame {
     this.supportsUsedThisLayer = false;
     this.detectorDisabled = false;
     this.anomalyDouble = false;
+    this.anomalyDoubleLoss = false;
     this.unlockCheckpoints();
+    const d = this.ensureDaily();
+    d.tasks.task_depth = Math.max(d.tasks.task_depth ?? 0, this.depth);
     const det = detectionStats(this.save.upgrades.detection);
-    this.layer = generateLayer(this.depth, { accuracy: det.accuracy });
+    this.layer = this.genLayer(this.depth, Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100));
     this.applyPreview(det.previewChance);
     this.applyAnomalyOnEntry();
     this.phase = "descending";
@@ -417,6 +802,7 @@ export class MinerGame {
       if (e.includes("双倍法则")) { this.anomalyDouble = true; this.anomalyDoubleLoss = true; }
       else if (e.includes("单行道")) this.retreatBlocked += 2;
       else if (e.includes("探测干扰")) this.detectorDisabled = true;
+      else if (e.includes("深渊回响")) this.nextTransparent = true;
       this.audio.play("anomaly");
       this.logAdd("深渊异常正在生效……", "warn");
     }
@@ -429,10 +815,10 @@ export class MinerGame {
     let risk = l.collapseRisk * (1 - 0.03 * this.save.upgrades.safety);
     risk *= useSupport ? ss.effect : 1;
     risk *= 1 + this.overheat * 0.004;
-    const r = this.loadRatio();
-    if (r > 1) risk += 0.12 + 0.06 * Math.floor((r - 1) * 10);
-    else if (r > 0.8) risk += 0.12;
-    else if (r > 0.6) risk += 0.06;
+    const r = this.slotRatio();
+    if (r >= 1) risk += 0.12;
+    else if (r > 0.8) risk += 0.06;
+    else if (r > 0.6) risk += 0.03;
     if (this.anomalyDouble) risk *= 1.2;
     return Math.max(0.03, Math.min(0.9, risk));
   }
@@ -476,6 +862,13 @@ export class MinerGame {
       this.applyAccident("severe");
       return;
     }
+    if (this.shieldActive) {
+      this.shieldActive = false;
+      this.audio.play("megaShield");
+      this.logAdd("应急护盾替你抵挡了灾难！", "good");
+      this.applyAccident("severe");
+      return;
+    }
     this.endByDisaster();
   }
 
@@ -484,14 +877,26 @@ export class MinerGame {
       ? Math.min(0.95, safetyStats(this.save.upgrades.safety).disasterLoss * 2)
       : safetyStats(this.save.upgrades.safety).disasterLoss;
     const lost = this.removeOreValue(lossMult);
-    const saved = this.loadValue;
+    const saved = Math.round(this.loadValue);
     const depthAt = this.depth;
-    this.save.stats.disasters++;
+    // 救援带回的矿石入库（剩余背包矿石即"被救回"的部分）
+    for (const slot of this.bag) {
+      if (slot.kind !== "ore" || slot.quality === undefined) continue;
+      const key = oreStackKey(slot.id as OreId, slot.quality);
+      this.save.warehouseOres[key] = (this.save.warehouseOres[key] ?? 0) + slot.count;
+    }
+    // 随身现金：50% 损失，50% 回归仓库
+    const pocketLost = Math.round(this.pocket * 0.5);
+    const pocketReturn = Math.round(this.pocket) - pocketLost;
+    this.save.cash += pocketReturn;
+    // 统计
+    const wasBest = saved > this.save.stats.bestRunValue;
     this.save.stats.runs++;
+    this.save.stats.disasters++;
     this.save.stats.totalBanked += saved;
     this.save.stats.bestRunValue = Math.max(this.save.stats.bestRunValue, saved);
     this.save.stats.bestDepth = Math.max(this.save.stats.bestDepth, depthAt);
-    this.save.cash += saved;
+    this.save.stats.totalMined += this.minedThisRun;
     persistSave(this.save);
     this.phase = "gameover";
     this.runEnded = true;
@@ -501,112 +906,153 @@ export class MinerGame {
     this.flash = 0.9;
     this.flashColor = "#ff2200";
     this.logAdd(`灾难事故！损失 ${fmt(lost)}，救援队带回 ${fmt(saved)}`, "bad");
+    this.gameoverInfo = {
+      reason: "灾难事故",
+      lost: Math.round(lost),
+      saved,
+      depth: depthAt,
+      best: wasBest,
+      pocketLost,
+    };
     const snap = this.buildSnapshot();
     this.cb.onUi(snap);
-    this.cb.onRunEnd({ kind: "disaster", banked: saved, depth: depthAt, best: false, save: this.save });
+    this.cb.onRunEnd({ kind: "disaster", banked: saved, depth: depthAt, best: wasBest, rating: null, bonus: 0, save: this.save });
   }
 
-  private finishRun(kind: "surfaced"): void {
+  private finishRun(): void {
     if (this.runEnded) return;
-    const banked = this.loadValue;
+    const banked = Math.round(this.loadValue);
     const depthAt = this.depth;
+    // 背包矿石入库；消耗品回仓库；随身现金回归
+    for (const slot of this.bag) {
+      if (slot.kind === "ore" && slot.quality !== undefined) {
+        const key = oreStackKey(slot.id as OreId, slot.quality);
+        this.save.warehouseOres[key] = (this.save.warehouseOres[key] ?? 0) + slot.count;
+      } else if (slot.kind === "item") {
+        this.save.warehouseItems[slot.id] = (this.save.warehouseItems[slot.id] ?? 0) + 1;
+      }
+    }
+    const pocketReturn = Math.round(this.pocket);
+    this.save.cash += pocketReturn;
+    // 评级：深度 × 货值 × 生存完整度（只奖励现金）
+    const rating = computeRating(depthAt, banked, this.durability / Math.max(1, this.maxDurability), this.difficulty);
+    const bonusCash = rating.bonusCash;
+    this.save.cash += bonusCash;
+    const wasBest = banked > this.save.stats.bestRunValue;
     this.save.stats.runs++;
     this.save.stats.totalBanked += banked;
-    this.save.cash += banked;
-    const wasBest = banked > this.save.stats.bestRunValue;
     this.save.stats.bestRunValue = Math.max(this.save.stats.bestRunValue, banked);
     this.save.stats.bestDepth = Math.max(this.save.stats.bestDepth, depthAt);
+    this.save.stats.totalMined += this.minedThisRun;
     persistSave(this.save);
     this.runEnded = true;
     this.audio.stopDrill();
     this.audio.play("success");
     this.phase = "surfaced";
     this.logAdd(`安全返回地面，共入库 ${fmt(banked)}`, "good");
+    this.surfacedInfo = {
+      banked,
+      depth: depthAt,
+      totalBanked: this.save.stats.totalBanked,
+      best: wasBest,
+      rating: rating.grade,
+      bonusCash,
+      pocketReturn,
+    };
     const snap = this.buildSnapshot();
     this.cb.onUi(snap);
-    this.cb.onRunEnd({ kind, banked, depth: depthAt, best: wasBest, save: this.save });
+    this.cb.onRunEnd({ kind: "surfaced", banked, depth: depthAt, best: wasBest, rating: rating.grade, bonus: bonusCash, save: this.save });
   }
 
-  private addOres(yields: { id: OreId; value: number }[]): void {
-    for (const y of yields) {
-      this.backpackCount[y.id]++;
-      this.oreValue[y.id] += y.value;
-      this.loadValue += y.value;
+  private maybeDropItem(): { name: string; icon: string } | null {
+    if (Math.random() >= 0.08) return null;
+    const ids = Object.keys(CONSUMABLES);
+    const id = ids[Math.floor(Math.random() * ids.length)];
+    const def = CONSUMABLES[id];
+    if (!def) return null;
+    if (this.usedSlots() >= this.slots) {
+      this.logAdd("背包已满，掉落的道具散落损失", "warn");
+      return null;
     }
+    this.bag.push({
+      key: "item:" + id, kind: "item", id, count: 1,
+      name: def.name, color: def.color, icon: def.icon, value: 0, unitValue: 0,
+    });
+    this.logAdd(`拾取道具：${def.name}`, "good");
+    return { name: def.name, icon: def.icon };
   }
 
-  private removeOreValue(ratio: number): number {
-    const target = this.loadValue * ratio;
-    let removed = 0;
-    const perValue = this.totalCount() > 0 ? this.loadValue / this.totalCount() : 0;
-    if (perValue <= 0) return 0;
-    const order = (Object.keys(this.backpackCount) as OreId[]).sort((a, b) => ORES[a].mult - ORES[b].mult);
-    for (const id of order) {
-      if (removed >= target || this.backpackCount[id] <= 0) continue;
-      const count = Math.ceil((target - removed) / Math.max(perValue, 1));
-      const drop = Math.min(this.backpackCount[id], Math.max(1, count));
-      this.backpackCount[id] -= drop;
-      this.oreValue[id] = Math.max(0, this.oreValue[id] - drop * perValue);
-      removed += drop * perValue;
+  // 矿石异变：随机一叠矿石价值 +10%
+  private applyOreMutation(): number {
+    const ores = this.bag.filter((s) => s.kind === "ore");
+    if (ores.length === 0) return 0;
+    const slot = ores[Math.floor(Math.random() * ores.length)];
+    slot.unitValue = slot.unitValue * 1.1;
+    const newVal = slot.count * slot.unitValue;
+    const delta = newVal - slot.value;
+    slot.value = newVal;
+    this.loadValue = Math.max(0, this.loadValue + delta);
+    return delta;
+  }
+
+  private rollPenetration(): number {
+    const bonus = Math.min(0.08, 0.006 * this.save.upgrades.drill) + this.pierceBuff / 100;
+    const base = (PENETRATE_BASE[this.drillMode] + bonus) * (1 - this.wearPenalty);
+    let layers = 1;
+    while (layers < PENETRATE_CAP) {
+      const p = base * Math.pow(PENETRATE_DECAY, layers - 1);
+      if (Math.random() >= p) break;
+      layers++;
     }
-    this.loadValue = Math.max(0, this.loadValue - removed);
-    return Math.round(removed);
+    return layers;
   }
 
-  private totalCount(): number {
-    return Object.values(this.backpackCount).reduce((s, v) => s + v, 0);
-  }
-
-  // ---------------- 背包手动管理 ----------------
-
-  // 丢弃某类矿石（按类型清空该矿石，减轻负重）
-  discardOre(id: OreId): void {
-    if (this.phase !== "result" && this.phase !== "observe") return;
-    const n = this.backpackCount[id] ?? 0;
-    if (n <= 0) return;
-    const val = this.oreValue[id] ?? 0;
-    this.backpackCount[id] = 0;
-    this.oreValue[id] = 0;
-    this.loadValue = Math.max(0, this.loadValue - val);
-    this.logAdd("丢弃 " + ORES[id].name + " ×" + n, "warn");
-    this.audio.play("click");
-    this.pushUi();
-  }
-
-  // 丢弃价值最低的一类矿石（优先石材/铜矿）
-  discardLowest(): void {
-    if (this.phase !== "result" && this.phase !== "observe") return;
-    const order = (Object.keys(this.backpackCount) as OreId[]).sort((a, b) => ORES[a].mult - ORES[b].mult);
-    for (const id of order) {
-      if (this.backpackCount[id] > 0) {
-        this.discardOre(id);
-        return;
+  private unlockCheckpoints(): void {
+    for (const cp of [100, 300, 600, 1000]) {
+      if (this.depth >= cp && !this.save.unlockedCheckpoints.includes(cp)) {
+        this.save.unlockedCheckpoints.push(cp);
+        this.save.unlockedCheckpoints.sort((a, b) => a - b);
+        persistSave(this.save);
+        this.logAdd(`已解锁 ${cp}m 升降机检查点！`, "good");
       }
     }
   }
 
-  // 清空背包
-  clearBackpack(): void {
-    if (this.phase !== "result" && this.phase !== "observe") return;
-    const ids = (Object.keys(this.backpackCount) as OreId[]).filter((id) => this.backpackCount[id] > 0);
-    if (ids.length === 0) return;
-    for (const id of ids) {
-      this.backpackCount[id] = 0;
-      this.oreValue[id] = 0;
+  private ensureDaily(): SaveData["daily"] {
+    const today = dateKey();
+    if (this.save.daily.date !== today) {
+      this.save.daily = { date: today, tasks: {}, claimed: {} };
     }
-    this.loadValue = 0;
-    this.logAdd("清空背包", "warn");
-    this.audio.play("click");
-    this.pushUi();
+    return this.save.daily;
   }
 
-  // 跳过钻进动画，直接结算
-  skipDrill(): void {
-    if (this.phase !== "drilling") return;
-    this.drillProgress = 1;
-    this.audio.play("click");
+  private buildBmView(): BlackMarketView {
+    const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
+    const daily = this.ensureDaily();
+    daily.tasks.task_depth = Math.max(daily.tasks.task_depth ?? 0, this.depth);
+    const tasks: DailyTaskView[] = dailyTasks(daily.date).map((t) => ({
+      id: t.id,
+      desc: t.desc,
+      progress: daily.tasks[t.id] ?? 0,
+      target: t.target,
+      claimed: !!daily.claimed[t.id],
+      reward: "好感 +1",
+    }));
+    return {
+      sellRatio: blackSellRatio(favor, this.hasBuff("sell_boost")),
+      buyDiscount: blackBuyDiscount(favor, this.hasBuff("bm_discount")),
+      stock: this.bmStock,
+      repairCost: blackMarketRepairCost(this.maxDurability),
+      repairPct: 40,
+      favor: this.save.favor,
+      tasks,
+      pocket: Math.round(this.pocket),
+      slots: this.slots,
+      usedSlots: this.usedSlots(),
+      bag: this.bag.map((s) => ({ ...s })),
+      depth: this.depth,
+    };
   }
-
   // ---------------- 钻进结算 ----------------
 
   private resolveDrill(): void {
@@ -619,19 +1065,25 @@ export class MinerGame {
     const layers = this.rollPenetration();
     let totalValue = 0;
     let interrupted = false;
+    let droppedItem: { name: string; icon: string } | null = null;
+    let interruptHazard = false;
+    let interruptBandit = false;
+    this.resultOres = [];
 
     for (let i = 0; i < layers; i++) {
       const l = this.layer!;
       const isFirst = i === 0;
       const double = isFirst ? this.anomalyDouble : !!l.anomalyEffect?.includes("双倍法则");
       const comboBefore = this.combo;
-      const yields = rollOreYield(this.depth, l.ores, l.quality, modeMult, comboBefore);
-      let value = layerBaseValue(yields);
+      const yields = rollOreYield(this.depth, l.ores, l.quality);
+      let gained = this.scaleYields(yields, modeMult, comboBefore);
       if (double) {
-        value *= 2;
+        gained = gained.map((g) => ({ ...g, count: Math.min(99, g.count * 2) }));
         this.logAdd("深渊双倍法则：本层收益翻倍！", "good");
       }
-      this.addOres(yields.map((y) => ({ id: y.id, value: y.value })));
+      const added = this.addOresToBag(gained, events);
+      this.resultOres = this.resultOres.concat(this.toBagSlots(added));
+      const value = added.reduce((s, a) => s + this.oreUnitValue(a.id, a.quality) * a.count, 0);
       totalValue += value;
 
       this.combo = Math.min(5, this.combo + comboDelta);
@@ -639,37 +1091,50 @@ export class MinerGame {
       const powerBase = (7 + l.hardness * 1.6) * (mode === "cautious" ? 1.2 : mode === "standard" ? 1 : 1.5);
       const heatMult = 1 + this.overheat * 0.003;
       this.power = Math.max(0, this.power - powerBase * heatMult);
-      const durLoss = (5 + l.hardness * 2) * (mode === "cautious" ? 0.7 : mode === "standard" ? 1 : 1.6)
-        * ds.durabilityLossMult * (1 + this.overheat * 0.004);
-      this.durability = Math.max(0, this.durability - durLoss);
+
+      // 温和难度无设备损耗
+      if (DIFFICULTY_DEFS[this.difficulty].wear) {
+        const wearRed = 1 - this.wearReduce / 100;
+        const durLoss = (5 + l.hardness * 2) * (mode === "cautious" ? 0.7 : mode === "standard" ? 1 : 1.6)
+          * ds.durabilityLossMult * (1 + this.overheat * 0.004) * wearRed;
+        this.durability = Math.max(0, this.durability - durLoss);
+      }
 
       if (l.stage === "magma") {
         const heatGain = (12 + 8 * l.hazardSeverity) * (mode === "cautious" ? 0.45 : mode === "standard" ? 1 : 1.65);
         this.overheat = Math.min(100, this.overheat + heatGain);
         if (mode === "cautious") this.overheat = Math.max(0, this.overheat - 8);
         if (this.overheat >= 100) {
-          this.durability = Math.max(0, this.durability - 8);
+          if (DIFFICULTY_DEFS[this.difficulty].wear) {
+            this.durability = Math.max(0, this.durability - 8);
+          }
           events.push("设备过热！耐久持续下降");
         }
       }
 
       if (l.hazard === "gas" && Math.random() < 0.65) {
-        const ss = safetyStats(this.save.upgrades.safety);
-        const drain = (16 + 10 * l.hazardSeverity) * (1 - ss.gasResist);
-        this.power = Math.max(0, this.power - drain);
-        this.audio.play("warning");
-        events.push(`毒气泄漏！电量 -${Math.round(drain)}`);
+        if (this.gasImmune) {
+          events.push("防毒面罩生效，毒气无效");
+        } else {
+          const ss = safetyStats(this.save.upgrades.safety);
+          const drain = (16 + 10 * l.hazardSeverity) * (1 - ss.gasResist);
+          this.power = Math.max(0, this.power - drain);
+          this.audio.play("warning");
+          events.push(`毒气泄漏！电量 -${Math.round(drain)}`);
+        }
       }
 
       if (l.anomalyEffect?.includes("矿石异变")) {
-        const bonus = Math.round(this.loadValue * 0.1);
-        this.loadValue += bonus;
-        events.push(`矿石异变：背包价值 +${fmt(bonus)}`);
+        const boost = this.applyOreMutation();
+        if (boost > 0) events.push(`矿石异变：背包价值 +${fmt(boost)}`);
       }
       if (!isFirst && l.anomalyEffect?.includes("单行道")) {
         this.retreatBlocked += 2;
         events.push("单行道：撤退通道被封锁");
       }
+
+      // 道具掉落：每层 8%，只展示第一件
+      if (!droppedItem) droppedItem = this.maybeDropItem();
 
       let risk = this.baseRisk(isFirst ? this.supportsUsedThisLayer : false);
       if (l.anomalyEffect?.includes("重力紊乱")) risk = Math.min(0.9, risk * 0.55);
@@ -689,11 +1154,16 @@ export class MinerGame {
 
       if (l.hazard === "creature" && !severity) {
         this.hazardSeverity = l.hazardSeverity;
-        this.phase = "hazard";
         this.audio.play("creature");
         this.logAdd("一头地底生物挡住了去路……", "warn");
-        this.pushUi();
-        return;
+        interruptHazard = true;
+        break;
+      }
+
+      // 强盗（硬核）：每层 12% 概率，出现在钻完该层之后
+      if (this.difficulty === "hardcore" && !severity && Math.random() < DIFFICULTY_DEFS.hardcore.banditChance) {
+        interruptBandit = true;
+        break;
       }
 
       if (this.power <= 0 || this.durability <= 0) {
@@ -706,17 +1176,22 @@ export class MinerGame {
       if (i < layers - 1) {
         this.depth += 10;
         const det = detectionStats(this.save.upgrades.detection);
-        this.layer = generateLayer(this.depth, { accuracy: det.accuracy });
+        this.layer = this.genLayer(this.depth, Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100));
         this.milkCount = 0;
       }
     }
 
     this.unlockCheckpoints();
+    const d = this.ensureDaily();
+    d.tasks.task_depth = Math.max(d.tasks.task_depth ?? 0, this.depth);
     this.milkCount = 0;
     this.supportsUsedThisLayer = false;
     this.detectorDisabled = false;
     this.anomalyDouble = false;
     this.anomalyDoubleLoss = false;
+
+    // 检查点层必出黑市 + 每层 15% 随机黑市
+    this.canBlackMarket = BM_DEPTHS.includes(this.depth) || Math.random() < 0.15;
 
     if (layers > 1) {
       this.floatTexts.push({
@@ -726,48 +1201,34 @@ export class MinerGame {
       this.audio.play("success");
     }
 
-    this.phase = "result";
-    const oreList = Object.entries(this.backpackCount)
-      .filter(([, c]) => c > 0)
-      .map(([id, count]) => ({
-        id: id as OreId, name: ORES[id as OreId].name, count,
-        color: ORES[id as OreId].color,
-        value: Math.round(this.loadValue),
-      }));
     const milkRewardMult = this.canMilk() ? MILK_MULT[Math.min(this.milkCount, MILK_MULT.length - 1)] : null;
     this.lastResult = {
-      ores: oreList,
+      ores: this.mergeBagSlots(this.resultOres),
       value: Math.round(totalValue),
       comboDelta: Math.round(comboDelta * 100) / 100,
       events,
       canMilk: this.canMilk(),
       milkRewardMult,
       layers,
+      canBlackMarket: this.canBlackMarket,
+      droppedItem,
     };
+
+    if (interruptHazard) {
+      this.phase = "hazard";
+      this.pushUi();
+      return;
+    }
+    if (interruptBandit) {
+      this.banditSeverity = 1 + Math.floor(Math.random() * 3);
+      this.phase = "bandit";
+      this.audio.play("creature");
+      this.logAdd("强盗拦住了去路！", "bad");
+      this.pushUi();
+      return;
+    }
+    this.phase = "result";
     this.pushUi();
-  }
-
-  private rollPenetration(): number {
-    const bonus = Math.min(0.08, 0.006 * this.save.upgrades.drill);
-    const base = PENETRATE_BASE[this.drillMode] + bonus;
-    let layers = 1;
-    while (layers < PENETRATE_CAP) {
-      const p = base * Math.pow(PENETRATE_DECAY, layers - 1);
-      if (Math.random() >= p) break;
-      layers++;
-    }
-    return layers;
-  }
-
-  private unlockCheckpoints(): void {
-    for (const cp of [100, 300, 600, 1000]) {
-      if (this.depth >= cp && !this.save.unlockedCheckpoints.includes(cp)) {
-        this.save.unlockedCheckpoints.push(cp);
-        this.save.unlockedCheckpoints.sort((a, b) => a - b);
-        persistSave(this.save);
-        this.logAdd(`已解锁 ${cp}m 升降机检查点！`, "good");
-      }
-    }
   }
 
   // ---------------- 更新循环 ----------------
@@ -898,27 +1359,26 @@ export class MinerGame {
 
   private buildSnapshot(): UiSnapshot {
     const l = this.layer;
-    const backpack: BackpackItem[] = (Object.keys(this.backpackCount) as OreId[])
-      .filter((id) => this.backpackCount[id] > 0)
-      .map((id) => ({
-        id, name: ORES[id].name, count: this.backpackCount[id],
-        color: ORES[id].color, value: Math.round(this.loadValue),
-      }));
-    const stageName = this.stageName();
     return {
       phase: this.phase,
       depth: this.depth,
-      stageName,
-      power: Math.round(this.power), maxPower: 100,
+      stageName: this.stageName(),
+      power: Math.round(this.power), maxPower: this.maxPower,
       durability: Math.round(this.durability), maxDurability: this.maxDurability,
       overheat: Math.round(this.overheat),
       combo: Math.round(this.combo * 100) / 100,
       supports: this.supports,
       detectors: this.detectors,
-      capacity: this.capacity,
+      slots: this.slots,
+      usedSlots: this.usedSlots(),
+      bag: this.bag.map((s) => ({ ...s })),
       load: Math.round(this.loadValue),
-      loadRatio: Math.round(this.loadRatio() * 100) / 100,
-      backpack,
+      pocket: Math.round(this.pocket),
+      difficulty: this.difficulty,
+      wearPenalty: Math.round(this.wearPenalty * 100) / 100,
+      buffs: [...this.buffs],
+      canBlackMarket: this.canBlackMarket,
+      blackmarket: this.phase === "blackmarket" ? this.buildBmView() : null,
       layer: l ? {
         signals: l.signals,
         hardnessText: ["松散", "中等", "坚硬", "极硬", "花岗岩"][l.hardness - 1],
@@ -931,14 +1391,12 @@ export class MinerGame {
         milkCount: this.milkCount,
         stage: l.stage,
       } : null,
-      result: this.phase === "result" ? {
-        ...(this.lastResult ?? { value: 0, comboDelta: 0, events: [], canMilk: false, milkRewardMult: null, layers: 1 }),
-        ores: backpack,
-      } : null,
+      result: this.phase === "result" || this.phase === "blackmarket" || this.phase === "bandit" ? this.lastResult : null,
       hazard: this.phase === "hazard" ? { type: "creature", severity: this.hazardSeverity } : null,
       anomaly: this.phase === "anomaly" && l?.anomalyEffect ? { text: l.anomalyEffect } : null,
-      gameover: this.phase === "gameover" ? { reason: "灾难事故", lost: 0, saved: this.loadValue, depth: this.depth, best: false } : null,
-      surfaced: this.phase === "surfaced" ? { banked: this.loadValue, depth: this.depth, totalBanked: this.save.stats.totalBanked, best: false } : null,
+      bandit: this.phase === "bandit" ? { severity: this.banditSeverity, pocket: Math.round(this.pocket) } : null,
+      gameover: this.phase === "gameover" ? this.gameoverInfo : null,
+      surfaced: this.phase === "surfaced" ? this.surfacedInfo : null,
       retreatBlocked: this.retreatBlocked > 0,
       log: [...this.log],
       drilling: this.phase === "drilling" ? { progress: this.drillProgress, mode: this.drillMode, hardness: l?.hardness ?? 1 } : null,
@@ -953,7 +1411,6 @@ export class MinerGame {
   private pushUi(): void {
     this.cb.onUi(this.buildSnapshot());
   }
-
   // ---------------- 渲染 ----------------
 
   private render(): void {
@@ -1553,16 +2010,16 @@ export class MinerGame {
     const barGap = 20;
     const barH = Math.min(200, h * 0.24);
     this.drawBar(ctx, barX, y0, barH, barW, this.durability / this.maxDurability, "#e08a45", "耐久");
-    this.drawBar(ctx, barX, y0 + barH + barGap, barH, barW, this.power / 100, "#ffd166", "电量");
+    this.drawBar(ctx, barX, y0 + barH + barGap, barH, barW, this.power / this.maxPower, "#ffd166", "电量");
     if (this.layer?.stage === "magma") {
       this.drawBar(ctx, barX, y0 + 2 * (barH + barGap), barH, barW, this.overheat / 100, this.overheat > 75 ? "#ff5522" : "#ff8c42", "过热");
     }
 
     // —— 右：负重条 ——
     const rx = w - pad - barW;
-    const ratio = this.loadRatio();
+    const ratio = this.slotRatio();
     const loadColor = ratio > 1.15 ? "#ff5a3c" : ratio > 1 ? "#e0665a" : ratio > 0.8 ? "#f0a23c" : ratio > 0.6 ? "#ffc857" : "#5fc98f";
-    this.drawBar(ctx, rx, y0, barH + 60, barW, Math.min(1.4, ratio) / 1.4, loadColor, `负重 ${Math.round(ratio * 100)}%`);
+    this.drawBar(ctx, rx, y0, barH + 60, barW, Math.min(1.4, ratio) / 1.4, loadColor, `背包 ${this.usedSlots()}/${this.slots}`);
 
     // —— 底部事件日志（观察阶段抬高，避免被底部面板遮挡）——
     const logY = this.phase === "observe" ? h - 182 : h - 14;
@@ -1621,3 +2078,4 @@ function riskLabel(risk: number): string {
   if (risk < 0.42) return "高";
   return "极高";
 }
+
