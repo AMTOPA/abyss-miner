@@ -1,0 +1,197 @@
+﻿"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { SaveData, loadSave, persistSave, fmt } from "@/game/config";
+import { AudioEngine } from "@/game/audio";
+import { RunResult } from "@/game/engine";
+import HomeScreen from "./HomeScreen";
+import RunScreen from "./RunScreen";
+import UpgradeScreen from "./UpgradeScreen";
+import LeaderboardScreen from "./LeaderboardScreen";
+import AuthModal from "./AuthModal";
+import { apiLogout, apiMe, apiSubmitScore, AuthUser } from "@/lib/api";
+
+type ScoreSubmit = { value: number; depth: number };
+
+export default function GameApp() {
+  const [save, setSave] = useState<SaveData>(() => loadSave());
+  const [inRun, setInRun] = useState(false);
+  const [runStartDepth, setRunStartDepth] = useState(0);
+  const [showUpgrades, setShowUpgrades] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [muted, setMuted] = useState<boolean>(() => loadSave().settings.muted);
+  const [pendingScore, setPendingScore] = useState<ScoreSubmit | null>(null);
+  const [submitState, setSubmitState] = useState<"idle" | "submitting" | "done" | "needLogin" | "error">("idle");
+  const [toast, setToast] = useState<string | null>(null);
+
+  const audioRef = useRef<AudioEngine | null>(null);
+  if (!audioRef.current) audioRef.current = new AudioEngine();
+
+  // ?????????????? localStorage ??? SSR ?????
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
+
+  useEffect(() => {
+    const a = audioRef.current!;
+    a.setMuted(muted);
+    const s = loadSave();
+    s.settings.muted = muted;
+    persistSave(s);
+  }, [muted]);
+
+  useEffect(() => {
+    apiMe()
+      .then((d) => d.user && setUser(d.user))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
+  const showToast = useCallback((msg: string) => setToast(msg), []);
+
+  const startRun = useCallback((depth: number) => {
+    setRunStartDepth(depth);
+    setSubmitState("idle");
+    setPendingScore(null);
+    setInRun(true);
+    audioRef.current?.play("click");
+  }, []);
+
+  const handleRunEnd = useCallback(
+    async (result: RunResult) => {
+      setSave(result.save);
+      // ?? RunScreen ????????????????????? onExit ?????
+      if (result.kind === "surfaced" && result.banked > 0) {
+        setPendingScore({ value: result.banked, depth: result.depth });
+        if (user) {
+          setSubmitState("submitting");
+          try {
+            await apiSubmitScore(result.banked, result.depth);
+            setSubmitState("done");
+            showToast("成绩已上榜！");
+          } catch {
+            setSubmitState("error");
+            showToast("成绩提交失败，请稍后再试");
+          }
+        } else {
+          setSubmitState("needLogin");
+        }
+      }
+    },
+    [user, showToast]
+  );
+
+  const handleLogin = useCallback(
+    (u: AuthUser) => {
+      setUser(u);
+      setAuthOpen(false);
+      showToast(`欢迎，${u.username}！`);
+      // 登录成功后提交待处理成绩
+      if (pendingScore) {
+        setSubmitState("submitting");
+        apiSubmitScore(pendingScore.value, pendingScore.depth)
+          .then(() => {
+            setSubmitState("done");
+            showToast("成绩已上榜！");
+          })
+          .catch(() => {
+            setSubmitState("error");
+            showToast("成绩提交失败");
+          });
+      }
+    },
+    [pendingScore, showToast]
+  );
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await apiLogout();
+    } catch {
+      /* ignore */
+    }
+    setUser(null);
+    showToast("已退出登录");
+  }, [showToast]);
+
+  const openAuth = useCallback((mode: "login" | "register") => {
+    setAuthMode(mode);
+    setAuthOpen(true);
+    audioRef.current?.play("click");
+  }, []);
+
+  if (!ready) {
+    return (
+      <main className="game-root">
+        <div className="splash">
+          <div className="splash-gem">??</div>
+          <div className="splash-text">????</div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="game-root">
+      {inRun ? (
+        <RunScreen
+          save={save}
+          startDepth={runStartDepth}
+          audio={audioRef.current!}
+          user={user}
+          muted={muted}
+          submitState={submitState}
+          onToggleMute={() => setMuted((m) => !m)}
+          onOpenAuth={openAuth}
+          onRunEnd={handleRunEnd}
+          onExit={() => {
+            setInRun(false);
+            audioRef.current?.play("click");
+          }}
+        />
+      ) : (
+        <HomeScreen
+          save={save}
+          user={user}
+          muted={muted}
+          onToggleMute={() => setMuted((m) => !m)}
+          onStart={startRun}
+          onUpgrades={() => {
+            setShowUpgrades(true);
+            audioRef.current?.play("click");
+          }}
+          onLeaderboard={() => {
+            setShowLeaderboard(true);
+            audioRef.current?.play("click");
+          }}
+          onLogin={() => openAuth("login")}
+          onRegister={() => openAuth("register")}
+          onLogout={handleLogout}
+        />
+      )}
+
+      {showUpgrades && (
+        <UpgradeScreen
+          save={save}
+          onBuy={(next) => {
+            setSave(next);
+            audioRef.current?.play("click");
+          }}
+          onClose={() => setShowUpgrades(false)}
+        />
+      )}
+
+      {showLeaderboard && <LeaderboardScreen onClose={() => setShowLeaderboard(false)} />}
+
+      {authOpen && <AuthModal initialMode={authMode} onClose={() => setAuthOpen(false)} onLogin={handleLogin} />}
+
+      {toast && <div className="toast">{toast}</div>}
+    </main>
+  );
+}
