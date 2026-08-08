@@ -68,8 +68,16 @@ const uname = "e2e" + Date.now().toString().slice(-8);
 await page.locator("input").nth(0).fill(uname);
 await page.locator("input").nth(1).fill("e2epass123");
 await page.getByRole("button", { name: "注册并登录" }).click();
-await page.waitForTimeout(800);
-ok("logged in chip", (await page.locator(".user-name", { hasText: uname }).count()) === 1);
+// 等待登录回调完成（回调与页面更新之间存在网络延迟，用轮询替代固定等待）
+const chipOk = await (async () => {
+  const deadline = Date.now() + 6000;
+  while (Date.now() < deadline) {
+    if ((await page.locator(".user-name", { hasText: uname }).count()) === 1) return true;
+    await page.waitForTimeout(150);
+  }
+  return false;
+})();
+ok("logged in chip", chipOk);
 
 // 8. Leaderboard
 await page.getByRole("button", { name: /排行榜/ }).click();

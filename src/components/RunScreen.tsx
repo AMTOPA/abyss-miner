@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { ORES, SaveData, fmt, fmtCombo } from "@/game/config";
@@ -87,7 +87,7 @@ export default function RunScreen(props: Props) {
         <div className="run-overlay">
           <div className="observe-layout">
             <div className="panel info-panel">
-              <div className="panel-title">第 {Math.floor(snap.depth / 10) + 1} 层 · {snap.depth}m · {snap.stageName}</div>
+              <div className="panel-title"><span className="layer-depth">第 {Math.floor(snap.depth / 10) + 1} 层</span> · {snap.depth}m · {snap.stageName}</div>
               <div className="layer-chips">
                 <span className="chip">岩质：{snap.layer.hardnessText}</span>
                 <span className="chip chip-quality">矿脉：{snap.layer.qualityText}</span>
@@ -149,7 +149,9 @@ export default function RunScreen(props: Props) {
           <div className="drilling-tip">
             <span className="drilling-spin">⛏️</span>
             <span>{MODE_INFO[snap.drilling.mode].name}中…</span>
-          </div>
+          
+          <span className="drill-progress"><span className="drill-progress-fill" style={{ width: `${Math.round((snap.drilling.progress ?? 0) * 100)}%` }} /></span>
+          <button className="btn btn-ghost btn-sm skip-btn" onClick={() => act((g) => g.skipDrill())}>跳过 ⏭</button></div>
         </div>
       )}
 
@@ -186,10 +188,15 @@ export default function RunScreen(props: Props) {
                 <span key={b.id} className="bag-chip" style={{ borderColor: b.color, color: b.color }}>
                   <span className="ore-dot" style={{ background: b.color, boxShadow: `0 0 8px ${b.color}` }} />
                   {b.name} ×{b.count}
+                  <button className="bag-discard" title={`丢弃 ${b.name}`} onClick={() => act((g) => g.discardOre(b.id))}>✕</button>
                 </span>
               ))}
               {snap.backpack.length > 7 && <span className="bag-chip">+{snap.backpack.length - 7}</span>}
               <span className="bag-total">背包 {fmt(snap.load)} / {fmt(snap.capacity)}</span>
+            </div>
+            <div className="bag-tools">
+              <button className="btn btn-ghost btn-sm" disabled={snap.backpack.length === 0} onClick={() => act((g) => g.discardLowest())}>🗑 丢弃最低价值</button>
+              <button className="btn btn-ghost btn-sm" disabled={snap.backpack.length === 0} onClick={() => { if (window.confirm("确定清空背包吗？丢弃的矿石无法找回。")) act((g) => g.clearBackpack()); }}>清空背包</button>
             </div>
             <div className="modal-actions">
               {snap.result.canMilk && snap.result.milkRewardMult != null && (

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { CHECKPOINTS, SaveData, checkpointCost, fmt } from "@/game/config";
@@ -35,6 +35,12 @@ export default function HomeScreen(props: Props) {
         <div className="home-glow g1" />
         <div className="home-glow g2" />
         <div className="home-glow g3" />
+        <div className="home-strata" />
+        <div className="home-dust d1" />
+        <div className="home-dust d2" />
+        <div className="home-dust d3" />
+        <div className="home-dust d4" />
+        <div className="home-dust d5" />
       </div>
 
       <header className="home-top">

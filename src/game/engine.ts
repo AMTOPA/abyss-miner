@@ -117,6 +117,7 @@ export class MinerGame {
   private detectors = 0;
   private capacity = 100;
   private backpackCount: Record<OreId, number> = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
+  private oreValue: Record<OreId, number> = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
   private loadValue = 0;
   private milkCount = 0;
   private supportsUsedThisLayer = false;
@@ -137,6 +138,7 @@ export class MinerGame {
   private drillProgress = 0;
   private drillMode: DrillMode = "standard";
   private drillDuration = 1;
+  private lastResult: UiSnapshot["result"] | null = null;
   private log: LogEntry[] = [];
   private oreGlints: Array<{ x: number; y: number; color: string; r: number }> = [];
   private eyes: Array<{ x: number; y: number; phase: number }> = [];
@@ -361,7 +363,9 @@ export class MinerGame {
 
   private resetBackpack(): void {
     this.backpackCount = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
+    this.oreValue = { stone: 0, copper: 0, iron: 0, silver: 0, gold: 0, diamond: 0, crystal: 0, unknown: 0 };
     this.loadValue = 0;
+    this.lastResult = null;
   }
 
   private logAdd(text: string, kind: LogEntry["kind"] = "info"): void {
@@ -526,6 +530,7 @@ export class MinerGame {
   private addOres(yields: { id: OreId; value: number }[]): void {
     for (const y of yields) {
       this.backpackCount[y.id]++;
+      this.oreValue[y.id] += y.value;
       this.loadValue += y.value;
     }
   }
@@ -541,6 +546,7 @@ export class MinerGame {
       const count = Math.ceil((target - removed) / Math.max(perValue, 1));
       const drop = Math.min(this.backpackCount[id], Math.max(1, count));
       this.backpackCount[id] -= drop;
+      this.oreValue[id] = Math.max(0, this.oreValue[id] - drop * perValue);
       removed += drop * perValue;
     }
     this.loadValue = Math.max(0, this.loadValue - removed);
@@ -549,6 +555,56 @@ export class MinerGame {
 
   private totalCount(): number {
     return Object.values(this.backpackCount).reduce((s, v) => s + v, 0);
+  }
+
+  // ---------------- 背包手动管理 ----------------
+
+  // 丢弃某类矿石（按类型清空该矿石，减轻负重）
+  discardOre(id: OreId): void {
+    if (this.phase !== "result" && this.phase !== "observe") return;
+    const n = this.backpackCount[id] ?? 0;
+    if (n <= 0) return;
+    const val = this.oreValue[id] ?? 0;
+    this.backpackCount[id] = 0;
+    this.oreValue[id] = 0;
+    this.loadValue = Math.max(0, this.loadValue - val);
+    this.logAdd("丢弃 " + ORES[id].name + " ×" + n, "warn");
+    this.audio.play("click");
+    this.pushUi();
+  }
+
+  // 丢弃价值最低的一类矿石（优先石材/铜矿）
+  discardLowest(): void {
+    if (this.phase !== "result" && this.phase !== "observe") return;
+    const order = (Object.keys(this.backpackCount) as OreId[]).sort((a, b) => ORES[a].mult - ORES[b].mult);
+    for (const id of order) {
+      if (this.backpackCount[id] > 0) {
+        this.discardOre(id);
+        return;
+      }
+    }
+  }
+
+  // 清空背包
+  clearBackpack(): void {
+    if (this.phase !== "result" && this.phase !== "observe") return;
+    const ids = (Object.keys(this.backpackCount) as OreId[]).filter((id) => this.backpackCount[id] > 0);
+    if (ids.length === 0) return;
+    for (const id of ids) {
+      this.backpackCount[id] = 0;
+      this.oreValue[id] = 0;
+    }
+    this.loadValue = 0;
+    this.logAdd("清空背包", "warn");
+    this.audio.play("click");
+    this.pushUi();
+  }
+
+  // 跳过钻进动画，直接结算
+  skipDrill(): void {
+    if (this.phase !== "drilling") return;
+    this.drillProgress = 1;
+    this.audio.play("click");
   }
 
   // ---------------- 钻进结算 ----------------
@@ -679,19 +735,16 @@ export class MinerGame {
         value: Math.round(this.loadValue),
       }));
     const milkRewardMult = this.canMilk() ? MILK_MULT[Math.min(this.milkCount, MILK_MULT.length - 1)] : null;
-    this.cb.onUi({
-      ...this.buildSnapshot(),
-      phase: "result",
-      result: {
-        ores: oreList,
-        value: Math.round(totalValue),
-        comboDelta: Math.round(comboDelta * 100) / 100,
-        events,
-        canMilk: this.canMilk(),
-        milkRewardMult,
-        layers,
-      },
-    });
+    this.lastResult = {
+      ores: oreList,
+      value: Math.round(totalValue),
+      comboDelta: Math.round(comboDelta * 100) / 100,
+      events,
+      canMilk: this.canMilk(),
+      milkRewardMult,
+      layers,
+    };
+    this.pushUi();
   }
 
   private rollPenetration(): number {
@@ -878,7 +931,10 @@ export class MinerGame {
         milkCount: this.milkCount,
         stage: l.stage,
       } : null,
-      result: null,
+      result: this.phase === "result" ? {
+        ...(this.lastResult ?? { value: 0, comboDelta: 0, events: [], canMilk: false, milkRewardMult: null, layers: 1 }),
+        ores: backpack,
+      } : null,
       hazard: this.phase === "hazard" ? { type: "creature", severity: this.hazardSeverity } : null,
       anomaly: this.phase === "anomaly" && l?.anomalyEffect ? { text: l.anomalyEffect } : null,
       gameover: this.phase === "gameover" ? { reason: "灾难事故", lost: 0, saved: this.loadValue, depth: this.depth, best: false } : null,
@@ -938,24 +994,92 @@ export class MinerGame {
   }
 
   private drawCaveSides(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    const sway = Math.sin(this.time * 0.05) * 10;
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    const t = this.time;
+    const sway = this.phase === "observe" ? 0 : Math.sin(t * 0.06) * 12;
+    const stage = this.layer ? stageForDepth(this.depth) : "shallow";
+
+    // 左壁（有机曲线）
+    ctx.fillStyle = "rgba(0,0,0,0.42)";
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(w * 0.18 + sway, 0);
-    ctx.lineTo(w * 0.1 + sway, h * 0.5);
-    ctx.lineTo(w * 0.2 + sway, h);
+    ctx.lineTo(w * 0.2 + sway, 0);
+    ctx.quadraticCurveTo(w * 0.09 + sway, h * 0.3, w * 0.16 + sway * 1.2, h * 0.52);
+    ctx.quadraticCurveTo(w * 0.21 + sway * 0.8, h * 0.76, w * 0.12 + sway, h);
     ctx.lineTo(0, h);
     ctx.closePath();
     ctx.fill();
+
+    // 右壁
     ctx.beginPath();
     ctx.moveTo(w, 0);
-    ctx.lineTo(w * 0.82 - sway, 0);
-    ctx.lineTo(w * 0.9 - sway, h * 0.5);
-    ctx.lineTo(w * 0.8 - sway, h);
+    ctx.lineTo(w * 0.8 - sway, 0);
+    ctx.quadraticCurveTo(w * 0.91 - sway, h * 0.3, w * 0.84 - sway * 1.2, h * 0.52);
+    ctx.quadraticCurveTo(w * 0.79 - sway * 0.8, h * 0.76, w * 0.88 - sway, h);
     ctx.lineTo(w, h);
     ctx.closePath();
     ctx.fill();
+
+    // 壁面向洞穴中心渐暗，制造纵深
+    const shadeL = ctx.createLinearGradient(0, 0, w * 0.26, 0);
+    shadeL.addColorStop(0, "rgba(0,0,0,0.55)");
+    shadeL.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = shadeL;
+    ctx.fillRect(0, 0, w * 0.26, h);
+    const shadeR = ctx.createLinearGradient(w * 0.74, 0, w, 0);
+    shadeR.addColorStop(0, "rgba(0,0,0,0)");
+    shadeR.addColorStop(1, "rgba(0,0,0,0.55)");
+    ctx.fillStyle = shadeR;
+    ctx.fillRect(w * 0.74, 0, w * 0.26, h);
+
+    // 阶段氛围细节（确定性位置，避免闪烁）
+    if (stage === "oldmine") {
+      ctx.strokeStyle = "rgba(130,95,55,0.5)";
+      ctx.lineWidth = 5;
+      for (let i = 0; i < 3; i++) {
+        const yy = h * (0.22 + i * 0.24);
+        ctx.beginPath();
+        ctx.moveTo(-6, yy);
+        ctx.lineTo(w * 0.18 + sway, yy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(w + 6, yy);
+        ctx.lineTo(w * 0.82 - sway, yy);
+        ctx.stroke();
+      }
+    } else if (stage === "bio") {
+      const rnd = mulberry32((this.layer ? this.layer.index : 0) * 31 + 5);
+      ctx.strokeStyle = "rgba(95,201,143,0.2)";
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 12; i++) {
+        const side = rnd() < 0.5 ? -1 : 1;
+        const x0 = side < 0 ? 0 : w;
+        const y0 = h * (0.15 + rnd() * 0.7);
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        let px = x0, py = y0;
+        const segs = 2 + Math.floor(rnd() * 3);
+        for (let s = 0; s < segs; s++) {
+          px += side * w * (0.04 + rnd() * 0.05);
+          py += (rnd() - 0.4) * 40;
+          ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+    } else if (stage === "magma") {
+      const pulse = 0.22 + 0.12 * Math.sin(t * 2);
+      const rnd = mulberry32((this.layer ? this.layer.index : 0) * 17 + 3);
+      ctx.strokeStyle = `rgba(255,90,30,${pulse})`;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 8; i++) {
+        const side = rnd() < 0.5 ? -1 : 1;
+        const x0 = side < 0 ? w * 0.06 : w * 0.94;
+        const y0 = h * (0.12 + rnd() * 0.8);
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x0 + side * w * 0.06, y0 + (rnd() - 0.5) * 30);
+        ctx.stroke();
+      }
+    }
   }
 
   private drawRockFace(ctx: CanvasRenderingContext2D, w: number, h: number): void {
@@ -1050,7 +1174,7 @@ export class MinerGame {
     ctx.beginPath();
     ctx.moveTo(0, top);
     for (let x = 0; x <= w; x += 22) {
-      ctx.lineTo(x, top + 3 + Math.sin(x * 0.035 + this.time * 0.5) * 3);
+      ctx.lineTo(x, top + 3 + Math.sin(x * 0.035 + (this.phase === "observe" ? 0 : this.time * 0.5)) * 3);
     }
     ctx.lineTo(w, top);
     ctx.closePath();
@@ -1156,87 +1280,185 @@ export class MinerGame {
     const active = this.phase === "drilling";
     const jitter = active
       ? Math.sin(this.time * 46) * 2.5 + Math.cos(this.time * 33) * 2
-      : Math.sin(this.time * 2) * 1.2;
+      : Math.sin(this.time * 1.6) * 1.3;
     const face = this.rockFaceY();
     const push = active ? this.wallHole * 16 : 0;
     const bodyBottom = face - 54 + push;
     const bodyTop = bodyBottom - 56;
 
     ctx.save();
-    ctx.translate(cx + Math.sin(this.time * 2) * 2, 0);
+    ctx.translate(cx + Math.sin(this.time * 1.8) * 2, 0);
 
-    ctx.strokeStyle = "#6b5638";
+    // —— 顶部锚固（井口框架 + 滑轮）——
+    ctx.fillStyle = "#33271a";
+    ctx.fillRect(-52, 0, 104, 10);
+    ctx.fillStyle = "#4a3a24";
+    ctx.fillRect(-46, 10, 92, 12);
+    ctx.fillStyle = "#6b5638";
+    ctx.fillRect(-4, 0, 8, 22);
+    ctx.fillStyle = "#7d6a4e";
+    ctx.beginPath();
+    ctx.arc(0, 8, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(233,187,110,0.5)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // —— 缆绳（轻微摆动 + 麻花纹理）——
+    const sway = Math.sin(this.time * 1.2) * 3;
+    ctx.strokeStyle = "#5a4a30";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, bodyTop + 6);
+    ctx.moveTo(0, 8);
+    ctx.quadraticCurveTo(sway, (bodyTop + 6) / 2, sway * 0.4, bodyTop + 6);
     ctx.stroke();
-    ctx.fillStyle = "#4a3a24";
-    ctx.beginPath();
-    ctx.roundRect(-36, 4, 72, 24, 8);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(233,187,110,0.35)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.strokeStyle = "rgba(233,187,110,0.18)";
+    ctx.lineWidth = 1;
+    for (let y = 24; y < bodyTop + 4; y += 7) {
+      ctx.beginPath();
+      ctx.moveTo(-2 + Math.sin(y * 0.4) * 2, y);
+      ctx.lineTo(2 + Math.sin(y * 0.4 + 1) * 2, y);
+      ctx.stroke();
+    }
 
+    // —— 机身 ——
     ctx.save();
-    ctx.rotate(jitter * 0.01);
+    ctx.rotate(jitter * 0.012);
 
     const bodyGrad = ctx.createLinearGradient(-40, bodyTop, 40, bodyBottom);
     bodyGrad.addColorStop(0, "#5c4a33");
-    bodyGrad.addColorStop(0.5, "#7d6a4e");
-    bodyGrad.addColorStop(1, "#423420");
+    bodyGrad.addColorStop(0.45, "#8a7454");
+    bodyGrad.addColorStop(1, "#3a2e1c");
     ctx.fillStyle = bodyGrad;
     ctx.beginPath();
     ctx.roundRect(-36, bodyTop, 72, 56, 10);
     ctx.fill();
-    ctx.strokeStyle = "rgba(233,187,110,0.4)";
+    ctx.strokeStyle = "rgba(233,187,110,0.5)";
     ctx.lineWidth = 2;
     ctx.stroke();
+    // 顶部高光
+    ctx.fillStyle = "rgba(255,240,210,0.12)";
+    ctx.beginPath();
+    ctx.roundRect(-36, bodyTop, 72, 14, [10, 10, 4, 4]);
+    ctx.fill();
+    // 铆钉
+    ctx.fillStyle = "rgba(255,240,210,0.55)";
+    for (const [rx, ry] of [[-28, bodyTop + 8], [28, bodyTop + 8], [-28, bodyBottom - 12], [28, bodyBottom - 12]]) {
+      ctx.beginPath();
+      ctx.arc(rx, ry, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 警示斜纹
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-36, bodyTop + 19, 72, 8);
+    ctx.clip();
+    ctx.fillStyle = "rgba(20,14,8,0.5)";
+    for (let x = -40; x < 44; x += 12) {
+      ctx.beginPath();
+      ctx.moveTo(x, bodyTop + 19);
+      ctx.lineTo(x + 7, bodyTop + 19);
+      ctx.lineTo(x - 3, bodyTop + 27);
+      ctx.lineTo(x - 10, bodyTop + 27);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
 
-    const lightY = bodyBottom - 8;
-    const lightGrad = ctx.createRadialGradient(0, lightY, 2, 0, lightY, 34);
-    lightGrad.addColorStop(0, active ? "rgba(255,200,87,0.5)" : "rgba(255,200,87,0.22)");
+    // 中央舷窗（琥珀灯光）
+    const winY = bodyTop + 33;
+    const winGrad = ctx.createRadialGradient(0, winY, 1, 0, winY, 14);
+    winGrad.addColorStop(0, "rgba(255,214,120,0.95)");
+    winGrad.addColorStop(1, "rgba(120,84,30,0.9)");
+    ctx.fillStyle = winGrad;
+    ctx.beginPath();
+    ctx.roundRect(-13, winY - 6, 26, 12, 6);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(40,28,16,0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // —— 底部探照灯（径向光晕 + 锥形光柱照向岩层）——
+    const lightY = bodyBottom - 4;
+    const lightGrad = ctx.createRadialGradient(0, lightY, 2, 0, lightY, 40);
+    lightGrad.addColorStop(0, active ? "rgba(255,200,87,0.55)" : "rgba(255,200,87,0.3)");
     lightGrad.addColorStop(1, "rgba(255,200,87,0)");
     ctx.fillStyle = lightGrad;
     ctx.beginPath();
-    ctx.arc(0, lightY, 34, 0, Math.PI * 2);
+    ctx.arc(0, lightY, 40, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = active ? "#ffd166" : "#b98a3e";
+
+    const coneLen = Math.min(h - lightY, face + 150 - lightY);
+    if (coneLen > 10) {
+      const coneGrad = ctx.createLinearGradient(0, lightY, 0, lightY + coneLen);
+      coneGrad.addColorStop(0, active ? "rgba(255,210,130,0.20)" : "rgba(255,210,130,0.12)");
+      coneGrad.addColorStop(1, "rgba(255,210,130,0)");
+      ctx.fillStyle = coneGrad;
+      ctx.beginPath();
+      ctx.moveTo(-8, lightY);
+      ctx.lineTo(-34, lightY + coneLen);
+      ctx.lineTo(34, lightY + coneLen);
+      ctx.lineTo(8, lightY);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = active ? "#ffd166" : "#c99a4a";
     ctx.shadowColor = "#ffc857";
-    ctx.shadowBlur = active ? 18 : 8;
+    ctx.shadowBlur = active ? 20 : 10;
     ctx.beginPath();
     ctx.arc(0, lightY, 9, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
 
+    // —— 钻头连接件 ——
     ctx.fillStyle = "#3a2e1c";
+    ctx.strokeStyle = "rgba(233,187,110,0.3)";
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(-14, bodyBottom - 2, 28, 26, 6);
+    ctx.roundRect(-15, bodyBottom - 2, 30, 26, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#6b5638";
+    ctx.beginPath();
+    ctx.roundRect(-17, bodyBottom + 18, 34, 8, 3);
     ctx.fill();
 
-    const bitTop = bodyBottom + 22;
-    const bitLen = 30;
+    // —— 旋转钻头 ——
+    const bitTop = bodyBottom + 26;
+    const bitLen = 34;
     ctx.save();
     ctx.translate(0, bitTop);
-    ctx.rotate(active ? this.time * 40 : this.time * 4);
-    ctx.fillStyle = "#a89a7e";
+    ctx.rotate(active ? this.time * 42 : this.time * 5);
+    const bitGrad = ctx.createLinearGradient(-12, 0, 12, bitLen);
+    bitGrad.addColorStop(0, "#d9cba6");
+    bitGrad.addColorStop(0.5, "#a89a7e");
+    bitGrad.addColorStop(1, "#6e6450");
+    ctx.fillStyle = bitGrad;
     ctx.beginPath();
-    ctx.moveTo(-10, 0);
+    ctx.moveTo(-11, 0);
     ctx.lineTo(0, bitLen);
-    ctx.lineTo(10, 0);
+    ctx.lineTo(11, 0);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = "#d9cba6";
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(60,48,30,0.8)";
+    ctx.lineWidth = 1.6;
     for (let i = 0; i < 4; i++) {
       ctx.beginPath();
-      ctx.arc(0, i * 7, 6 - i * 1.2, 0, Math.PI * 2);
+      ctx.arc(0, i * 7.5, 8 - i * 1.5, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.beginPath();
+    ctx.moveTo(-3, 2);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(3, 2);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
-    ctx.restore();
-    ctx.restore();
+
+    ctx.restore(); // 机身
+    ctx.restore(); // 整体
   }
 
   private drawParticles(ctx: CanvasRenderingContext2D): void {
@@ -1273,57 +1495,83 @@ export class MinerGame {
 
   private drawHUD(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     const pad = 16;
+
+    // —— 左上：深度卡片 ——
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = "rgba(22,16,10,0.72)";
+    ctx.beginPath();
+    ctx.roundRect(pad - 10, pad - 6, 122, 54, 12);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = "rgba(233,187,110,0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(pad - 10, pad - 6, 122, 54, 12);
+    ctx.stroke();
+
     ctx.textAlign = "left";
-    ctx.font = "bold 30px 'Microsoft YaHei', sans-serif";
-    ctx.shadowColor = "rgba(0,0,0,0.8)";
-    ctx.shadowBlur = 8;
+    ctx.font = "bold 26px 'Microsoft YaHei', sans-serif";
     ctx.fillStyle = "#f6ead4";
-    ctx.fillText(`${Math.round(this.depthDisplay)}m`, pad, pad + 30);
-    ctx.shadowBlur = 0;
-    ctx.font = "14px 'Microsoft YaHei', sans-serif";
-    ctx.fillStyle = "rgba(240,218,178,0.75)";
-    ctx.fillText(this.stageName(), pad, pad + 52);
+    ctx.fillText(`${Math.round(this.depthDisplay)}m`, pad, pad + 26);
+    ctx.font = "12px 'Microsoft YaHei', sans-serif";
+    ctx.fillStyle = "rgba(240,218,178,0.7)";
+    ctx.fillText(this.stageName(), pad, pad + 44);
+
+    // —— 右上：Combo / 本轮收益卡片 ——
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = "rgba(22,16,10,0.72)";
+    ctx.beginPath();
+    ctx.roundRect(w - pad - 158, pad - 6, 158, 54, 12);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = "rgba(233,187,110,0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(w - pad - 158, pad - 6, 158, 54, 12);
+    ctx.stroke();
 
     ctx.textAlign = "right";
-    ctx.font = "bold 26px 'Microsoft YaHei', sans-serif";
+    ctx.font = "bold 20px 'Microsoft YaHei', sans-serif";
     ctx.shadowColor = "#ffd166";
-    ctx.shadowBlur = 14;
+    ctx.shadowBlur = 12;
     ctx.fillStyle = this.combo >= 3 ? "#ffd166" : "#ffffff";
-    ctx.fillText(`Combo ${fmtCombo(this.combo)}`, w - pad, pad + 26);
+    ctx.fillText(`Combo ${fmtCombo(this.combo)}`, w - pad, pad + 24);
     ctx.shadowBlur = 0;
-    ctx.font = "bold 18px 'Microsoft YaHei', sans-serif";
+    ctx.font = "bold 14px 'Microsoft YaHei', sans-serif";
     ctx.fillStyle = "#5fc98f";
-    ctx.fillText(`本轮 ${fmt(this.loadValue)}`, w - pad, pad + 50);
+    ctx.fillText(`本轮 ${fmt(this.loadValue)}`, w - pad, pad + 43);
     ctx.textAlign = "left";
 
+    // —— 左：状态条（耐久 / 电量 / 岩浆带过热）——
     const barX = pad;
     const barW = 14;
-    const y0 = 90;
-    const barGap = 18;
-    const barH = Math.min(220, h * 0.28);
+    const y0 = 88;
+    const barGap = 20;
+    const barH = Math.min(200, h * 0.24);
     this.drawBar(ctx, barX, y0, barH, barW, this.durability / this.maxDurability, "#e08a45", "耐久");
     this.drawBar(ctx, barX, y0 + barH + barGap, barH, barW, this.power / 100, "#ffd166", "电量");
     if (this.layer?.stage === "magma") {
       this.drawBar(ctx, barX, y0 + 2 * (barH + barGap), barH, barW, this.overheat / 100, this.overheat > 75 ? "#ff5522" : "#ff8c42", "过热");
     }
 
+    // —— 右：负重条 ——
     const rx = w - pad - barW;
     const ratio = this.loadRatio();
     const loadColor = ratio > 1.15 ? "#ff5a3c" : ratio > 1 ? "#e0665a" : ratio > 0.8 ? "#f0a23c" : ratio > 0.6 ? "#ffc857" : "#5fc98f";
     this.drawBar(ctx, rx, y0, barH + 60, barW, Math.min(1.4, ratio) / 1.4, loadColor, `负重 ${Math.round(ratio * 100)}%`);
 
-    const iconsY = h - 46;
-    ctx.font = "13px 'Microsoft YaHei', sans-serif";
-    ctx.fillStyle = "rgba(240,218,178,0.8)";
-    ctx.fillText(this.supports > 0 ? `支撑架 ×${this.supports}` : "支撑架 无", pad, iconsY);
-    ctx.fillText(this.detectors > 0 ? `探测器 ×${this.detectors}` : "探测器 无", pad + 110, iconsY);
-
+    // —— 底部事件日志（观察阶段抬高，避免被底部面板遮挡）——
+    const logY = this.phase === "observe" ? h - 182 : h - 14;
     ctx.textAlign = "center";
-    ctx.font = "14px 'Microsoft YaHei', sans-serif";
+    ctx.font = "13px 'Microsoft YaHei', sans-serif";
     this.log.slice(-2).forEach((entry, i) => {
-      ctx.globalAlpha = 0.55 + 0.45 * (i / 2);
+      ctx.globalAlpha = 0.6 + 0.4 * (i / 2);
       ctx.fillStyle = entry.kind === "good" ? "#5fc98f" : entry.kind === "bad" ? "#ff8a80" : entry.kind === "warn" ? "#ffc857" : "#e8dcc6";
-      ctx.fillText(entry.text, w / 2, h - 16 - (1 - i) * 18);
+      ctx.fillText(entry.text, w / 2, logY - (1 - i) * 18);
     });
     ctx.globalAlpha = 1;
     ctx.textAlign = "left";

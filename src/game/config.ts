@@ -95,7 +95,7 @@ export function safetyStats(level: number) {
 
 export function backpackStats(level: number) {
   return {
-    capacity: 100 + 20 * level,
+    capacity: 160 + 25 * level,
     overloadTolerance: 0.1 + 0.02 * level, // 超载多少比例内无额外惩罚
   };
 }
