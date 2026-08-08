@@ -733,8 +733,11 @@ export class MinerGame {
     this.shake = Math.max(0, this.shake - dt * 30);
     this.flash = Math.max(0, this.flash - dt * 1.6);
 
-    this.rockScroll += dt * (10 + this.rockSwoosh * 420 + (this.phase === "drilling" ? 60 : 0));
     this.rockSwoosh = Math.max(0, this.rockSwoosh - dt * 1.5);
+    // 观察/选择阶段岩层保持静止，只有钻机旋转；换层下落与钻进时岩层滚动
+    if (this.phase === "descending" || this.phase === "drilling") {
+      this.rockScroll += dt * (this.rockSwoosh * 420 + (this.phase === "drilling" ? 60 : 0));
+    }
     this.depthDisplay += (this.depth - this.depthDisplay) * Math.min(1, dt * 5);
 
     for (const p of this.particles) {
@@ -767,7 +770,7 @@ export class MinerGame {
       });
     }
 
-    if (this.phase !== "drilling" && Math.random() < dt * 6) {
+    if (this.phase !== "drilling" && this.phase !== "observe" && Math.random() < dt * 6) {
       this.particles.push({
         x: this.w / 2 + (Math.random() - 0.5) * 90, y: this.rockFaceY() + 4,
         vx: (Math.random() - 0.5) * 24, vy: 30 + Math.random() * 50,
