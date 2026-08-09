@@ -422,7 +422,7 @@ export class AudioEngine {
         this.noise({ dur: 0.48, vol: v(0.075), f0: 3200, f1: 500, type: "bandpass", Q: 2.2, delay: 0.36, pan: 0.24 });
         break;
       case "evacWindow":
-        // 模组选择：插槽咔哒 + 两级确认音，强调“装配完成”。????
+        // 模组选择：插槽咔哒 + 两级确认音，强调“装配完成”。
         this.noise({ dur: 0.32, vol: v(0.075), f0: 1400, f1: 260, type: "bandpass", Q: 1.1, attack: 0.06, pan: -0.2 });
         this.tone({ type: "triangle", f0: 659.25, f1: 622.25, dur: 0.2, vol: v(0.1), delay: 0.04, pan: -0.12 });
         this.tone({ type: "triangle", f0: 880, f1: 830.61, dur: 0.26, vol: v(0.11), delay: 0.22, pan: 0.12, harmonics: [2] });

@@ -189,8 +189,6 @@ export const TRAIT_ORDER: TraitId[] = [
   "pocket_dim", "gas_convert", "lucky_pick", "ice_core", "echo_lens",
   "scrap_armor", "double_dip", "ghost_bit", "rich_blood", "vent_cool", "magnet",
 ];
-// ================= ???? =================
-
 // ================= 挑战词缀 =================
 
 export const CHALLENGE_DEFS: Record<ChallengeId, {
