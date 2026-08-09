@@ -121,6 +121,7 @@ export class MinerGame {
   private canBlackMarket = false;
   private bmStock: BmStockItem[] = [];
   private bmGenerated = false;  // 本局黑市货架是否已生成（首次生成后固定，可付费刷新）
+  private bmEncounterDepth = -1; // v6.1：当前货架对应的黑市深度（新黑市自动上新）
   private milkCount = 0;
   private supportsUsedThisLayer = false;
   private retreatBlocked = 0;
@@ -276,6 +277,7 @@ export class MinerGame {
     this.canBlackMarket = false;
     this.bmStock = [];
     this.bmGenerated = false;
+    this.bmEncounterDepth = -1;
     this.bag = [];
     this.loadValue = 0;
     this.lastResult = null;
@@ -520,11 +522,13 @@ export class MinerGame {
 
   retreat(): void {
     if (this.phase !== "observe" && this.phase !== "result") return;
-    if (this.retreatBlocked > 0) {
-      this.logAdd(`撤退通道被封锁，还需继续 ${this.retreatBlocked} 层`, "bad");
+    // v6.2：非撤离点禁止返回地面，只能继续下潜到撤离点撤离
+    if (!this.evacAvailable) {
+      this.logAdd("此处没有撤离点，无法返回地面——继续下潜寻找撤离点", "bad");
+      this.audio.play("warning");
       return;
     }
-    this.finishRun();
+    this.evacuate(false);
   }
 
   emergencyRetreat(): void {
@@ -669,13 +673,14 @@ export class MinerGame {
     }
     if (this.phase !== "result" || !this.canBlackMarket) return;
     const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
-    // 本局首次进入（或货架售罄补货）才生成；离开再进保持原货架，不再每次刷新
-    if (!this.bmGenerated || this.bmStock.length === 0) {
+    // v6.1：每次遇到新的黑市（不同深度）自动上新；同一黑市内离开再进保持货架；售罄自动补货
+    if (!this.bmGenerated || this.bmStock.length === 0 || this.depth !== this.bmEncounterDepth) {
       this.bmStock = generateBmStock(this.depth, favor, {
         sellBoost: this.hasBuff("sell_boost"),
         discount: this.hasBuff("bm_discount") || this.bmDiscountRun > 0,
       });
       this.bmGenerated = true;
+      this.bmEncounterDepth = this.depth;
     }
     this.phase = "blackmarket";
     this.audio.play("click");
@@ -701,6 +706,7 @@ export class MinerGame {
     this.save.stats.totalSells += sell;
     this.save.stats.bmTrades++;
     const d = this.ensureDaily();
+    d.tasks.task_bmtrade = (d.tasks.task_bmtrade ?? 0) + 1;
     d.tasks.task_sell = (d.tasks.task_sell ?? 0) + sell;
     this.logAdd(`黑市售出 ${slot.name} ×${sell}，+${fmt(cash)}`, "good");
     this.audio.play("click");
@@ -749,6 +755,8 @@ export class MinerGame {
     // 库存扣减，售完下架
     item.stock -= 1;
     this.save.stats.bmTrades++;
+    const d = this.ensureDaily();
+    d.tasks.task_bmtrade = (d.tasks.task_bmtrade ?? 0) + 1;
     if (item.stock <= 0) this.bmStock.splice(index, 1);
     this.audio.play("click");
     persistSave(this.save);
@@ -788,7 +796,7 @@ export class MinerGame {
   bmLeave(): void {
     if (this.phase !== "blackmarket") return;
     this.phase = "result";
-    // 保留货架：本局内再次进入黑市不刷新（付费可手动刷新）
+    // 保留货架：同一黑市再次进入不刷新；下个黑市（新深度）自动上新（也可付费手动刷新）
     this.pushUi();
   }
 
@@ -812,6 +820,7 @@ export class MinerGame {
       discount: this.hasBuff("bm_discount") || this.bmDiscountRun > 0,
     });
     this.bmGenerated = true;
+    this.bmEncounterDepth = this.depth;
     this.logAdd("货架已刷新", "good");
     this.audio.play("click");
     this.pushUi();
@@ -1534,13 +1543,12 @@ export class MinerGame {
     return this.rnd() < risk ? this.rollSeverity(risk) : null;
   }
 
-  // v6：累计值模式 —— 每层按风险积累"灾难累计值"，满 100 触发灾难；
-  // 小事故/严重事故仍按原概率发生，可用"岩压稳定剂"等道具压条
+  // v6：累计值模式 —— 每层风险只转化为"灾难累计值"，不满 100 不直接触发事故；
+  // 满 100 触发灾难（护盾/锚点/支撑架可抵挡一次并清零）。随机小事故/严重事故不再单独发生。
   private gaugeRoll(risk: number): "minor" | "severe" | null {
     const delta = Math.min(16, Math.max(0.8, risk * 100 * 0.13)) * this.gaugeGainMult * DIFFICULTY_DEFS[this.difficulty].gaugeMult;
     this.addGauge(delta);
-    if (this.rnd() >= risk) return null;
-    return this.rnd() < 0.55 ? "minor" : "severe";
+    return null;
   }
 
   private addGauge(delta: number): void {
@@ -1610,6 +1618,8 @@ export class MinerGame {
       }
       this.pocket -= this.evacCost;
     }
+    const d = this.ensureDaily();
+    d.tasks.task_evac = (d.tasks.task_evac ?? 0) + 1;
     this.finishRun({ evac: special ? "special" : "normal" });
   }
 
@@ -2082,6 +2092,11 @@ export class MinerGame {
       this.audio.play("success");
     }
 
+    // v6.1：超载钻进任务计数
+    if (mode === "overload") {
+      const d = this.ensureDaily();
+      d.tasks.task_overload = (d.tasks.task_overload ?? 0) + 1;
+    }
     const milkRewardMult = this.canMilk() ? MILK_MULT[Math.min(this.milkCount, MILK_MULT.length - 1)] : null;
     this.lastResult = {
       ores: this.mergeBagSlots(this.resultOres),

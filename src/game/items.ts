@@ -404,10 +404,16 @@ export function dailyTasks(date: string): DailyTaskDef[] {
   const depthTarget = [200, 300, 400, 500][Math.floor(rnd() * 4)];
   const sellTarget = [10, 15, 20][Math.floor(rnd() * 3)];
   const scareTarget = [3, 4, 5][Math.floor(rnd() * 3)];
+  const overloadTarget = [3, 4, 5][Math.floor(rnd() * 3)];
+  const tradeTarget = [2, 3, 4][Math.floor(rnd() * 3)];
+  const evacTarget = [1, 2][Math.floor(rnd() * 2)];
   return [
     { id: "task_depth", desc: "深潜至 " + depthTarget + "m", target: depthTarget },
     { id: "task_sell", desc: "在黑市出售 " + sellTarget + " 个矿石", target: sellTarget },
     { id: "task_creature", desc: "驱赶 " + scareTarget + " 只地底生物", target: scareTarget },
+    { id: "task_overload", desc: "超载钻进 " + overloadTarget + " 次", target: overloadTarget },
+    { id: "task_bmtrade", desc: "黑市交易 " + tradeTarget + " 次", target: tradeTarget },
+    { id: "task_evac", desc: "从撤离点撤离 " + evacTarget + " 次", target: evacTarget },
   ];
 }
 

@@ -6,7 +6,7 @@ import { fmt, fmtCombo, type SaveData } from "@/game/config";
 import { MinerGame } from "@/game/engine";
 import { AudioEngine } from "@/game/audio";
 import type { AuthUser } from "@/lib/api";
-import { DIFFICULTY_DEFS, ORE_QUALITIES, RATING_INFO } from "@/game/items";
+import { CONSUMABLES, DIFFICULTY_DEFS, ORE_QUALITIES, RATING_INFO } from "@/game/items";
 import type { BagSlot, ChallengeId, ModuleId, RevealLevel, RouteId, RunConfig, RunResult, UiSnapshot } from "@/game/types";
 import BanditPanel from "./BanditPanel";
 import BasePanel from "./BasePanel";
@@ -15,6 +15,7 @@ import BossPanel from "./BossPanel";
 import ModulePanel from "./ModulePanel";
 import RoomPanel from "./RoomPanel";
 import RoutePanel from "./RoutePanel";
+import Tip from "./Tip";
 
 type Props = {
   save: SaveData;
@@ -96,20 +97,20 @@ function BagGrid(props: { slots: BagSlot[]; used: number; total: number; onUse?:
         if (slot.kind === "ore" && slot.quality) {
           const quality = ORE_QUALITIES[slot.quality];
           return (
-            <div key={slot.key} className="bag-cell bag-cell-ore" style={{ borderColor: slot.color }}>
+            <Tip key={slot.key} label={<><strong>{quality.name}</strong> · 单价 {fmt(slot.unitValue)} · 共 {fmt(slot.value)}{slot.danger ? <span className="tip-sub">⚠️ 携带风险 +{displayPercent(slot.danger)}</span> : null}</>}><div className="bag-cell bag-cell-ore" style={{ borderColor: slot.color }}>
               <span className="bag-icon">{quality.icon}</span><span className="bag-name">{slot.name}</span>
               <span className="bag-quality" style={{ color: quality.color }}>{quality.name}</span><span className="bag-qty">×{slot.count}</span><span className="bag-value">{fmt(slot.value)}</span>
               {!!slot.danger && <span className="bag-danger">风险 +{displayPercent(slot.danger)}</span>}
               {props.onDiscard && <button type="button" className="bag-discard" onClick={() => props.onDiscard?.(slot.key)}>丢弃</button>}
-            </div>
+            </div></Tip>
           );
         }
         return (
-          <div key={slot.key} className="bag-cell bag-cell-item" style={{ borderColor: slot.color }}>
+          <Tip key={slot.key} label={<>{CONSUMABLES[slot.id]?.desc ?? "局内消耗品，可在对应阶段使用"}</>}><div className="bag-cell bag-cell-item" style={{ borderColor: slot.color }}>
             <span className="bag-icon">{slot.icon ?? "📦"}</span><span className="bag-name">{slot.name}</span><span className="bag-qty">×{slot.count}</span>
             {props.onUse && <button type="button" className="bag-use" onClick={() => props.onUse?.(slot.key)}>使用</button>}
             {props.onDiscard && <button type="button" className="bag-discard" onClick={() => props.onDiscard?.(slot.key)}>丢弃</button>}
-          </div>
+          </div></Tip>
         );
       })}
       {Array.from({ length: emptyCount }, (_, index) => <div key={`empty-${index}`} className="bag-cell bag-cell-empty" />)}
@@ -219,7 +220,7 @@ export default function RunScreen(props: Props) {
             return <button key={mode} type="button" className={`btn drill-btn ${MODE_INFO[mode].cls}`} disabled={!snap.canDrill || cooling} onClick={() => act((engine) => engine.chooseMode(mode))}><span className="drill-icon">{MODE_INFO[mode].icon}</span><span className="drill-name">{MODE_INFO[mode].name}</span><span className="drill-desc">{cooling ? `冷却剩余 ${cautiousCooldown} 层` : MODE_INFO[mode].desc}</span>{mode === "overload" && <span className={`overload-risk ${snap.overheat >= 70 ? "hot" : ""}`}>当前热量 {Math.round(snap.overheat)}% · 高热增险</span>}</button>;
           })}</div>
           {retreatBlocked > 0 && <div className="retreat-status-note">🚫 常规撤离封锁，剩余 {retreatBlocked} 层；仅可尝试紧急撤退。</div>}
-          <div className="dock-row dock-secondary"><button type="button" className="btn btn-ghost" disabled={snap.detectors <= 0} onClick={() => act((engine) => engine.useDetector())}>📡 探测器 ×{snap.detectors}</button><button type="button" className="btn btn-ghost" disabled={snap.supports <= 0} onClick={() => act((engine) => engine.useSupport())}>🪨 支撑架 ×{snap.supports}</button>{snap.evacPoint ? <><button type="button" className="btn btn-success" onClick={() => act((engine) => engine.evacuate(false))}>🚁 撤离点撤离</button>{snap.evacPoint.special && <button type="button" className="btn btn-special-evac" onClick={() => act((engine) => engine.evacuate(true))}>🛩️ 特殊撤离 {fmt(snap.evacPoint.cost)}💰</button>}</> : <button type="button" className="btn btn-danger" disabled={retreatBlocked > 0} onClick={() => act((engine) => engine.retreat())}>🏠 返回地面</button>}{retreatBlocked > 0 && <button type="button" className="btn btn-overload" onClick={() => act((engine) => engine.emergencyRetreat())}>🚨 紧急撤退</button>}</div>
+          <div className="dock-row dock-secondary"><button type="button" className="btn btn-ghost" disabled={snap.detectors <= 0} onClick={() => act((engine) => engine.useDetector())}>📡 探测器 ×{snap.detectors}</button><button type="button" className="btn btn-ghost" disabled={snap.supports <= 0} onClick={() => act((engine) => engine.useSupport())}>🪨 支撑架 ×{snap.supports}</button>{snap.evacPoint ? <><button type="button" className="btn btn-success" onClick={() => act((engine) => engine.evacuate(false))}>🚁 撤离点撤离</button>{snap.evacPoint.special && <button type="button" className="btn btn-special-evac" onClick={() => act((engine) => engine.evacuate(true))}>🛩️ 特殊撤离 {fmt(snap.evacPoint.cost)}💰</button>}</> : <span className="no-evac-hint">⚠️ 当前非撤离点 · 需继续下潜至撤离点才能撤离</span>}</div>
         </div>
 
         <div className="panel bag-panel"><div className="panel-title">🎒 背包 {snap.usedSlots}/{snap.slots} 格 · 总价值 {fmt(snap.load)}</div><BagGrid slots={snap.bag} used={snap.usedSlots} total={snap.slots} onUse={(key) => act((engine) => engine.useItem(key))} onDiscard={(key) => act((engine) => engine.discardSlot(key))} /></div>
@@ -246,10 +247,10 @@ export default function RunScreen(props: Props) {
         {snap.result.events.length > 0 && <ul className="event-list">{snap.result.events.map((event, index) => <li key={`${event}-${index}`} className={event.includes("损失") || event.includes("过热") ? "event bad" : "event good"}>{event}</li>)}</ul>}
         <div className="bag-total">背包 {snap.usedSlots}/{snap.slots} 格 · 总价值 {fmt(snap.load)}</div><BagGrid slots={snap.bag} used={snap.usedSlots} total={snap.slots} onUse={(key) => act((engine) => engine.useItem(key))} onDiscard={(key) => act((engine) => engine.discardSlot(key))} />
         <div className="bag-tools"><button type="button" className="btn btn-ghost btn-sm" disabled={!snap.bag.some((slot) => slot.kind === "ore")} onClick={() => { const lowest = snap.bag.filter((slot) => slot.kind === "ore").sort((a, b) => a.value - b.value)[0]; if (lowest) act((engine) => engine.discardSlot(lowest.key)); }}>🗑 丢弃最低价值</button></div>
-        <div className="modal-actions result-actions">{snap.result.canMilk && snap.result.milkRewardMult != null && <button type="button" className="btn btn-milk" onClick={() => act((engine) => engine.milkVein())}>💎 榨取矿脉 ×{snap.result.milkRewardMult}</button>}{snap.result.canBlackMarket && <button type="button" className="btn btn-secondary" onClick={() => act((engine) => engine.openBlackMarket())}>🚪 前往黑市</button>}<button type="button" className="btn btn-primary" onClick={() => act((engine) => engine.continueDescend())}>⬇ 继续深入</button>{snap.evacPoint ? <><button type="button" className="btn btn-success" onClick={() => act((engine) => engine.evacuate(false))}>🚁 撤离点撤离</button>{snap.evacPoint.special && <button type="button" className="btn btn-special-evac" onClick={() => act((engine) => engine.evacuate(true))}>🛩️ 特殊撤离 {fmt(snap.evacPoint.cost)}💰</button>}</> : <button type="button" className="btn btn-danger" disabled={retreatBlocked > 0} onClick={() => act((engine) => engine.retreat())}>🏠 返回地面</button>}{retreatBlocked > 0 && <button type="button" className="btn btn-overload" onClick={() => act((engine) => engine.emergencyRetreat())}>🚨 紧急撤退</button>}</div>
+        <div className="modal-actions result-actions">{snap.result.canMilk && snap.result.milkRewardMult != null && <button type="button" className="btn btn-milk" onClick={() => act((engine) => engine.milkVein())}>💎 榨取矿脉 ×{snap.result.milkRewardMult}</button>}{snap.result.canBlackMarket && <button type="button" className="btn btn-secondary" onClick={() => act((engine) => engine.openBlackMarket())}>🚪 前往黑市</button>}<button type="button" className="btn btn-primary" onClick={() => act((engine) => engine.continueDescend())}>⬇ 继续深入</button>{snap.evacPoint ? <><button type="button" className="btn btn-success" onClick={() => act((engine) => engine.evacuate(false))}>🚁 撤离点撤离</button>{snap.evacPoint.special && <button type="button" className="btn btn-special-evac" onClick={() => act((engine) => engine.evacuate(true))}>🛩️ 特殊撤离 {fmt(snap.evacPoint.cost)}💰</button>}</> : <span className="no-evac-hint">⚠️ 当前非撤离点 · 需继续下潜至撤离点才能撤离</span>}</div>
       </div></div>}
 
-      {snap?.phase === "hazard" && snap.hazard && <div className="run-overlay stage-overlay"><div className="panel hazard-panel"><div className="panel-title danger-text">👾 地底生物挡住了去路！</div><p className="modal-hint">危险等级：{"◆".repeat(snap.hazard.severity)}</p><div className="hazard-actions"><button type="button" className="btn btn-secondary" onClick={() => act((engine) => engine.creatureChoice("scare"))}>⚡ 驱赶（耗电耗耐久）</button><button type="button" className="btn btn-secondary" onClick={() => act((engine) => engine.creatureChoice("bait"))}>🥩 丢矿石诱饵</button><button type="button" className="btn btn-overload" onClick={() => act((engine) => engine.creatureChoice("force"))}>💪 强行突破</button><button type="button" className="btn btn-danger" onClick={() => act((engine) => engine.creatureChoice("retreat"))}>🏠 立即撤退</button></div></div></div>}
+      {snap?.phase === "hazard" && snap.hazard && <div className="run-overlay stage-overlay"><div className="panel hazard-panel"><div className="panel-title danger-text">👾 地底生物挡住了去路！</div><p className="modal-hint">危险等级：{"◆".repeat(snap.hazard.severity)}</p><div className="hazard-actions"><button type="button" className="btn btn-secondary" onClick={() => act((engine) => engine.creatureChoice("scare"))}>⚡ 驱赶（耗电耗耐久）</button><button type="button" className="btn btn-secondary" onClick={() => act((engine) => engine.creatureChoice("bait"))}>🥩 丢矿石诱饵</button><button type="button" className="btn btn-overload" onClick={() => act((engine) => engine.creatureChoice("force"))}>💪 强行突破</button></div></div></div>}
       {snap?.phase === "anomaly" && snap.anomaly && <div className="run-overlay stage-overlay"><div className="panel anomaly-panel"><div className="panel-title abyss-text">🌀 深渊异常</div><p className="anomaly-text">{snap.anomaly.text}</p><div className="modal-actions"><button type="button" className="btn btn-primary" onClick={() => act((engine) => engine.anomalyContinue())}>踏入这一层</button></div></div></div>}
       {snap?.phase === "bandit" && snap.bandit && <BanditPanel severity={snap.bandit.severity} pocket={snap.bandit.pocket} onChoice={(action) => act((engine) => engine.banditChoice(action))} />}
       {snap?.phase === "blackmarket" && snap.blackmarket && <BlackMarketPanel view={snap.blackmarket} onSell={(key, count) => act((engine) => engine.bmSell(key, count))} onBuy={(index, payment) => act((engine) => engine.bmBuy(index, payment))} onRefresh={() => act((engine) => engine.bmRefresh())} onRepair={() => act((engine) => engine.bmRepair())} onClaim={(taskId) => act((engine) => engine.bmClaimTask(taskId))} onLeave={() => act((engine) => engine.bmLeave())} />}

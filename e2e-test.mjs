@@ -1,4 +1,4 @@
-﻿// e2e-test.mjs — v2 基础回归：大厅出矿 / 钻进 / 结算 / 黑市 / 仓库 / 商店 / 登录 / 排行榜
+// e2e-test.mjs — v2 基础回归：大厅出矿 / 钻进 / 结算 / 黑市 / 仓库 / 商店 / 登录 / 排行榜
 // 依赖：dev server 运行在 http://localhost:3000，Playwright + 系统 Chrome
 // 用法：node e2e-test.mjs
 import { chromium } from "playwright";
@@ -172,19 +172,34 @@ for (let step = 0; step < 80; step++) {
 ok("black market reached", bmOpened);
 
 // ---------- 4. 返回地面（评级） ----------
-for (let tries = 0; tries < 14 && !(await page.locator(".end-panel").count()); tries++) {
+for (let tries = 0; tries < 20 && !(await page.locator(".end-panel").count()); tries++) {
   const evacBtn = page.getByRole("button", { name: /撤离点撤离/ }).first();
   if (await evacBtn.count() && !(await evacBtn.isDisabled().catch(() => true))) {
     await evacBtn.click(); await page.waitForTimeout(900); continue;
   }
   const baseOptR = page.locator(".base-option").first();
   if (await baseOptR.count()) { await baseOptR.click(); await page.waitForTimeout(400); continue; }
-  const retreatBtn = page.getByRole("button", { name: /返回地面/ }).first();
-  if (await retreatBtn.count() && !(await retreatBtn.isDisabled().catch(() => true))) {
-    await retreatBtn.click(); await page.waitForTimeout(700);
-  } else {
-    await page.waitForTimeout(500);
+  const contBtn = page.getByRole("button", { name: /继续深入/ }).first();
+  if (await contBtn.count() && !(await contBtn.isDisabled().catch(() => true))) {
+    await contBtn.click(); await page.waitForTimeout(1200); continue;
   }
+  const drillBtn2 = page.getByRole("button", { name: /标准钻进/ }).first();
+  if (await drillBtn2.count()) {
+    await drillBtn2.click(); await page.waitForTimeout(200);
+    const skip = page.locator(".skip-btn"); if (await skip.count()) { await skip.click(); await page.waitForTimeout(300); }
+    await page.waitForTimeout(400); continue;
+  }
+  const bandit2 = page.getByRole("button", { name: /交矿石/ }).first();
+  if (await bandit2.count()) { await bandit2.click(); await page.waitForTimeout(300); continue; }
+  const hazard2 = page.getByRole("button", { name: /驱赶/ }).first();
+  if (await hazard2.count()) { await hazard2.click(); await page.waitForTimeout(300); continue; }
+  const route2 = page.locator(".route-card").first();
+  if (await route2.count()) { await route2.click(); await page.waitForTimeout(400); continue; }
+  const module2 = page.locator(".module-card").first();
+  if (await module2.count()) { await module2.click(); await page.waitForTimeout(400); continue; }
+  const room2 = page.locator(".room-option").first();
+  if (await room2.count()) { await room2.click(); await page.waitForTimeout(400); continue; }
+  await page.waitForTimeout(500);
 }
 ok("surfaced", (await page.locator(".end-panel.success").count()) === 1);
 const endText = await page.locator(".end-panel").innerText().catch(() => "");
@@ -251,22 +266,7 @@ const quickGo = page.getByRole("button", { name: /快速出发/ });
 if (await quickGo.count()) await quickGo.first().click();
 else await page.getByRole("button", { name: /出发！/ }).click();
 await page.waitForTimeout(2800);
-for (let i = 0; i < 8; i++) {
-  const drillBtn = page.getByRole("button", { name: /标准钻进/ });
-  if (await drillBtn.count()) { await drillBtn.click(); await page.waitForTimeout(200); const skip = page.locator(".skip-btn"); if (await skip.count()) { await skip.click(); await page.waitForTimeout(300); } await page.waitForTimeout(400); }
-  const cont = page.getByRole("button", { name: /继续深入/ });
-  if (await cont.count()) { await cont.click(); await page.waitForTimeout(1400); continue; }
-  const routeCard = page.locator(".route-card").first();
-  if (await routeCard.count()) { await routeCard.click(); await page.waitForTimeout(400); continue; }
-  const moduleCard = page.locator(".module-card").first();
-  if (await moduleCard.count()) { await moduleCard.click(); await page.waitForTimeout(400); continue; }
-  const roomOpt = page.locator(".room-option").first();
-  if (await roomOpt.count()) { await roomOpt.click(); await page.waitForTimeout(400); continue; }
-  const baseOpt2 = page.locator(".base-option").first();
-  if (await baseOpt2.count()) { await baseOpt2.click(); await page.waitForTimeout(400); continue; }
-  await page.waitForTimeout(800);
-}
-for (let tries = 0; tries < 14; tries++) {
+for (let tries = 0; tries < 20; tries++) {
   if (await page.locator(".end-panel").count()) break;
   const evac2 = page.getByRole("button", { name: /撤离点撤离/ }).first();
   if ((await evac2.count()) && !(await evac2.isDisabled().catch(() => true))) {
@@ -274,12 +274,30 @@ for (let tries = 0; tries < 14; tries++) {
     await page.waitForTimeout(900);
     break;
   }
-  const retreat2 = page.getByRole("button", { name: /返回地面/ }).first();
-  if ((await retreat2.count()) && !(await retreat2.isDisabled().catch(() => true))) {
-    await retreat2.click();
-    await page.waitForTimeout(700);
-    break;
+  const cont2 = page.getByRole("button", { name: /继续深入/ }).first();
+  if ((await cont2.count()) && !(await cont2.isDisabled().catch(() => true))) {
+    await cont2.click();
+    await page.waitForTimeout(1200);
+    continue;
   }
+  const drill3 = page.getByRole("button", { name: /标准钻进/ }).first();
+  if (await drill3.count()) {
+    await drill3.click(); await page.waitForTimeout(200);
+    const skip3 = page.locator(".skip-btn"); if (await skip3.count()) { await skip3.click(); await page.waitForTimeout(300); }
+    await page.waitForTimeout(400); continue;
+  }
+  const baseOpt2 = page.locator(".base-option").first();
+  const route3 = page.locator(".route-card").first();
+  if (await route3.count()) { await route3.click(); await page.waitForTimeout(400); continue; }
+  const module3 = page.locator(".module-card").first();
+  if (await module3.count()) { await module3.click(); await page.waitForTimeout(400); continue; }
+  const room3 = page.locator(".room-option").first();
+  if (await room3.count()) { await room3.click(); await page.waitForTimeout(400); continue; }
+  if (await baseOpt2.count()) { await baseOpt2.click(); await page.waitForTimeout(400); continue; }
+  const bandit3 = page.getByRole("button", { name: /交矿石/ }).first();
+  if (await bandit3.count()) { await bandit3.click(); await page.waitForTimeout(300); continue; }
+  const hazard3 = page.getByRole("button", { name: /驱赶/ }).first();
+  if (await hazard3.count()) { await hazard3.click(); await page.waitForTimeout(300); continue; }
   await page.waitForTimeout(500);
 }
 const doneNote = await page.locator(".submit-note.ok").count().catch(() => 0);

@@ -17,6 +17,7 @@ import ForgePanel from "./ForgePanel";
 import LoadoutPanel from "./LoadoutPanel";
 import ShopPanel from "./ShopPanel";
 import WarehousePanel from "./WarehousePanel";
+import Tip from "./Tip";
 
 export type LobbyTab = "deploy" | "warehouse" | "shop" | "loadout" | "forge" | "codex" | "leaderboard" | "settings";
 export type LobbyProps = {
@@ -300,7 +301,7 @@ export default function LobbyScreen(props: LobbyProps) {
           <div className="deploy-col">
             <section className="deploy-section">
               <h3 className="deploy-section-title"><span className="sec-num">8</span> 携带道具（最多 4 件）</h3>
-              {Object.keys(save.warehouseItems).length === 0 ? <p className="modal-hint">仓库暂无消耗品，可在商店购买或下矿获取。</p> : <div className="carry-grid">{Object.entries(save.warehouseItems).map(([id, count]) => { const def = CONSUMABLES[id]; if (!def || count <= 0) return null; const on = carried.includes(id); return <button key={id} type="button" className={`carry-chip ${on ? "on" : ""}`} disabled={!on && carried.length >= 4} onClick={() => toggleCarried(id)}><span>{def.icon} {def.name} ×{count}</span><span>{on ? "已携带 ✓" : "点击携带"}</span></button>; })}</div>}
+              {Object.keys(save.warehouseItems).length === 0 ? <p className="modal-hint">仓库暂无消耗品，可在商店购买或下矿获取。</p> : <div className="carry-grid">{Object.entries(save.warehouseItems).map(([id, count]) => { const def = CONSUMABLES[id]; if (!def || count <= 0) return null; const on = carried.includes(id); return <Tip key={id} label={<><strong>{def.name}</strong><span className="tip-sub">{def.desc}</span></>}><button type="button" className={`carry-chip ${on ? "on" : ""}`} disabled={!on && carried.length >= 4} onClick={() => toggleCarried(id)}><span>{def.icon} {def.name} ×{count}</span><span>{on ? "已携带 ✓" : "点击携带"}</span></button></Tip>; })}</div>}
             </section>
             <section className="deploy-section">
               <h3 className="deploy-section-title"><span className="sec-num">9</span> 出战装备</h3>
