@@ -2,11 +2,16 @@ node_modules
 .next
 .git
 .gitignore
+.dockerignore
+.env*
 data
 *.db
 *.log
 dev-*
 e2e-*.mjs
+dbg-*.ps1
+run-*.ps1
+smoke-*.mjs
 tests
 *.py
 .playwright-mcp

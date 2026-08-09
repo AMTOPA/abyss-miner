@@ -1,22 +1,30 @@
 # 生产部署编排：深渊矿工（Abyss Miner）
-# 用法（在服务器上）：docker compose up -d --build
-# 端口 8372 仅绑定本机回环地址（127.0.0.1），对外由站点反向代理：
-#   反向代理目标 http://127.0.0.1:8372 ，路径前缀 /abyss-miner
-# 数据卷 abyss-miner-data 持久化排行榜数据库（data/game.db）
+# 端口与子路径均通过环境变量注入，仓库内只保留占位符；真实值写在服务器本文件同目录的 .env（已被 .gitignore / .dockerignore 忽略，不会提交）。
+#
+# 在服务器上的部署方式：
+#   1) 在本文件同目录创建 .env，按需设置端口与子路径，例如：
+#        ABYSS_PORT=3000
+#        NEXT_PUBLIC_BASE_PATH=/
+#      （ABYSS_PORT 只填本机回环端口，不要暴露到公网；NEXT_PUBLIC_BASE_PATH 填站点子路径，如 /game，根路径部署留空）
+#   2) docker compose up -d --build
+#
+# 说明：
+#   - 端口仅绑定宿主机回环地址，对外由站点反向代理转发。
+#   - NEXT_PUBLIC_BASE_PATH 为站点子路径；为空表示部署在域名根路径。
 services:
   abyss-miner:
     build:
       context: .
       args:
-        BASE_PATH: /abyss-miner
+        BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
     image: abyss-miner:latest
     container_name: abyss-miner
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8372:3000"
+      - "127.0.0.1:${ABYSS_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_BASE_PATH=/abyss-miner
+      - NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH:-}
     volumes:
       - abyss-miner-data:/app/data
 volumes:
