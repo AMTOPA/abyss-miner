@@ -1,4 +1,9 @@
-﻿export type AuthUser = { id: number; username: string };
+﻿// 生产部署在子路径下运行（如 /abyss-miner），所有 API 调用需带上前缀。
+// NEXT_PUBLIC_BASE_PATH 在构建期由 Docker 注入；本地开发为空字符串。
+const API_BASE = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
+const api = (p: string) => `${API_BASE}${p}`;
+
+export type AuthUser = { id: number; username: string };
 export type ScoreKind = "value" | "depth" | "hardcore" | "net";
 export type LeaderboardRow = {
   rank: number;
@@ -30,25 +35,25 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
 }
 
 export async function apiRegister(username: string, password: string): Promise<{ ok: true; user: AuthUser }> {
-  return post("/api/auth/register", { username, password });
+  return post(api("/api/auth/register"), { username, password });
 }
 
 export async function apiLogin(username: string, password: string): Promise<{ ok: true; user: AuthUser }> {
-  return post("/api/auth/login", { username, password });
+  return post(api("/api/auth/login"), { username, password });
 }
 
 export async function apiLogout(): Promise<void> {
-  await post("/api/auth/logout");
+  await post(api("/api/auth/logout"));
 }
 
 export async function apiMe(): Promise<{ user: AuthUser | null }> {
-  const res = await fetch("/api/auth/me");
+  const res = await fetch(api("/api/auth/me"));
   return readJson(res);
 }
 
 export async function apiLeaderboard(limit = 50, kind: ScoreKind = "value"): Promise<LeaderboardData> {
   const params = new URLSearchParams({ limit: String(limit), kind });
-  const res = await fetch(`/api/leaderboard?${params.toString()}`);
+  const res = await fetch(`${api("/api/leaderboard")}?${params.toString()}`);
   return readJson(res);
 }
 
@@ -59,5 +64,5 @@ export async function apiSubmitScore(
   kind: ScoreKind = "value",
   net?: number
 ): Promise<{ ok: true; best: ScoreBest }> {
-  return post("/api/leaderboard", { runId, runValue, depth, kind, ...(net === undefined ? {} : { net }) });
+  return post(api("/api/leaderboard"), { runId, runValue, depth, kind, ...(net === undefined ? {} : { net }) });
 }

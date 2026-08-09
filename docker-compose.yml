@@ -1,0 +1,23 @@
+# 生产部署编排：深渊矿工（Abyss Miner）
+# 用法（在服务器上）：docker compose up -d --build
+# 端口 8372 仅绑定本机回环地址（127.0.0.1），对外由站点反向代理：
+#   反向代理目标 http://127.0.0.1:8372 ，路径前缀 /abyss-miner
+# 数据卷 abyss-miner-data 持久化排行榜数据库（data/game.db）
+services:
+  abyss-miner:
+    build:
+      context: .
+      args:
+        BASE_PATH: /abyss-miner
+    image: abyss-miner:latest
+    container_name: abyss-miner
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8372:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_BASE_PATH=/abyss-miner
+    volumes:
+      - abyss-miner-data:/app/data
+volumes:
+  abyss-miner-data:

@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.gitignore
+data
+*.db
+*.log
+dev-*
+e2e-*.mjs
+tests
+*.py
+.playwright-mcp
+README.md
