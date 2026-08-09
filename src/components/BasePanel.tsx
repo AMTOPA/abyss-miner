@@ -26,6 +26,7 @@ export default function BasePanel({ base, onChoose }: Props) {
       </div>
 
       {!base.built ? (
+        <>
         <div className="base-card base-build-card">
           <div className="base-status-badge base-status base-status-unbuilt">未建成</div>
           {need ? (
@@ -43,6 +44,16 @@ export default function BasePanel({ base, onChoose }: Props) {
             📦 交付材料
           </button>
         </div>
+        <div className="base-option-grid">
+          {base.options.filter((o) => o.id !== "build").map((option) => (
+            <button key={option.id} type="button" className="base-card base-option" onClick={() => onChoose(option.id)}>
+              <span className="base-option-icon">{option.icon}</span>
+              <span className="base-option-label base-title">{option.label}</span>
+              <span className="base-option-desc base-meta">{option.desc}</span>
+            </button>
+          ))}
+        </div>
+        </>
       ) : (
         <>
           <div className="base-status-badge base-status base-status-built">已建成</div>

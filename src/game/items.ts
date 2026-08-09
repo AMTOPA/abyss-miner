@@ -1,4 +1,4 @@
-﻿// ---------- v2 物品/品质/难度/黑市数据模型 ----------
+// ---------- v2 物品/品质/难度/黑市数据模型 ----------
 import { ORES, baseOreValue } from "./config";
 import type { OreId } from "./config";
 import type { TraitId } from "./content";
@@ -47,11 +47,11 @@ export type Difficulty = "mild" | "normal" | "hardcore";
 
 export const DIFFICULTY_DEFS: Record<
   Difficulty,
-  { name: string; icon: string; desc: string; incomeMult: number; wear: boolean; banditChance: number; color: string }
+  { name: string; icon: string; desc: string; incomeMult: number; wear: boolean; banditChance: number; gaugeMult: number; color: string }
 > = {
-  mild:     { name: "温和", icon: "🌿", desc: "无设备损耗 · 无强盗 · 收益 ×0.8", incomeMult: 0.8, wear: false, banditChance: 0,    color: "#5fc98f" },
-  normal:   { name: "中等", icon: "⚙️", desc: "设备损耗（每 25% 耐久 -10% 性能）· 收益 ×1.0", incomeMult: 1.0, wear: true, banditChance: 0, color: "#ffd166" },
-  hardcore: { name: "硬核", icon: "🔥", desc: "设备损耗 + 随机强盗（约 12% 层）· 收益 ×1.5", incomeMult: 1.5, wear: true, banditChance: 0.12, color: "#ff6b5a" },
+  mild:     { name: "温和", icon: "🌿", desc: "无设备损耗 · 无强盗 · 收益 ×0.8", incomeMult: 0.8, wear: false, banditChance: 0, gaugeMult: 0.6, color: "#5fc98f" },
+  normal:   { name: "中等", icon: "⚙️", desc: "设备损耗（每 25% 耐久 -10% 性能）· 收益 ×1.0", incomeMult: 1.0, wear: true, banditChance: 0, gaugeMult: 1.0, color: "#ffd166" },
+  hardcore: { name: "硬核", icon: "🔥", desc: "设备损耗 + 随机强盗（约 12% 层）· 收益 ×1.5", incomeMult: 1.5, wear: true, banditChance: 0.12, gaugeMult: 1.4, color: "#ff6b5a" },
 };
 
 export const DIFFICULTY_ORDER: Difficulty[] = ["mild", "normal", "hardcore"];
@@ -121,7 +121,7 @@ export type EquipmentInstance = {
 
 export type ItemKind = "consumable" | "equipment";
 
-export type ConsumableEffect = "repair" | "repair_plus" | "fuel" | "shield" | "purify" | "pierce" | "disaster_guard";
+export type ConsumableEffect = "repair" | "repair_plus" | "fuel" | "shield" | "purify" | "pierce" | "disaster_guard" | "stabilize";
 
 export type ItemDef = {
   id: string;
@@ -146,6 +146,7 @@ export const CONSUMABLES: Record<string, ItemDef> = {
   purifier:   { id: "purifier",   name: "深渊净化剂", icon: "🧪", kind: "consumable", desc: "本局免疫毒气", basePrice: 55, color: "#7cc4ff", effect: "purify" },
   dynamite:   { id: "dynamite",   name: "震波炸药", icon: "💣", kind: "consumable", desc: "本局穿透概率 +8%", basePrice: 70, color: "#ff8c42", effect: "pierce" },
   repair_kit_plus: { id: "repair_kit_plus", name: "高级维修套件", icon: "🛠️", kind: "consumable", desc: "恢复 100% 钻机耐久", basePrice: 260, color: "#c77dff", effect: "repair_plus" },
+  stabilizer:    { id: "stabilizer",    name: "岩压稳定剂",    icon: "🧴", kind: "consumable", desc: "灾难累计值 -30",                basePrice: 70,  color: "#7dd3fc", effect: "stabilize" },
 };
 
 const TIER_COLORS: Record<ItemTier, string> = { 1: "#9aa5b1", 2: "#ffd166", 3: "#c77dff" };
@@ -247,7 +248,7 @@ export function equipInstanceDesc(inst: EquipmentInstance): string {
 
 export type BuffId =
   | "bm_discount" | "sell_boost" | "quality" | "pierce"
-  | "wear_less" | "fuel" | "gas" | "shield" | "slots" | "favor";
+  | "wear_less" | "fuel" | "gas" | "shield" | "slots" | "favor" | "gauge_less";
 
 export type BuffDef = { id: BuffId; name: string; icon: string; desc: string; price: number };
 
@@ -262,11 +263,12 @@ export const BUFF_DEFS: Record<BuffId, BuffDef> = {
   shield:      { id: "shield",      name: "一次性护盾", icon: "🛡️", desc: "抵挡一次灾难", price: 80 },
   slots:       { id: "slots",       name: "外挂货架", icon: "🧰", desc: "本局背包格 +2", price: 70 },
   favor:       { id: "favor",       name: "老主顾", icon: "🤝", desc: "本局黑市好感 +1（售价更高）", price: 50 },
+  gauge_less:  { id: "gauge_less",  name: "岩压抑制器", icon: "🌡️", desc: "本局灾难累计值增速 -40%", price: 70 },
 };
 
 export const BUFF_ORDER: BuffId[] = [
   "bm_discount", "sell_boost", "quality", "pierce", "wear_less",
-  "fuel", "gas", "shield", "slots", "favor",
+  "fuel", "gas", "shield", "slots", "favor", "gauge_less",
 ];
 
 export const BUFF_RANDOM_PRICE = 120;

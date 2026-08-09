@@ -2800,3 +2800,51 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
 
 .bm-section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .bm-section-title-row .btn { font-size: 11.5px; }
+
+/* ================= v6：撤离点 + 灾难累计条 ================= */
+.btn-success {
+  background: linear-gradient(135deg, #2f9e6e, #1d6b49);
+  border-color: rgba(95, 201, 143, 0.5);
+  color: #eafff3;
+}
+.btn-special-evac {
+  background: linear-gradient(135deg, #8a5fd6, #54338f);
+  border-color: rgba(199, 125, 255, 0.55);
+  color: #f3eaff;
+}
+.disaster-gauge-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(230, 180, 110, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(240, 162, 60, 0.07), transparent 60%);
+}
+.disaster-gauge-card.compact {
+  margin: 8px 0;
+  padding: 8px 10px;
+}
+.disaster-gauge-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; color: #e8d9bd; margin-bottom: 6px;
+}
+.disaster-gauge-head strong {
+  font-size: 14px; color: #ffd166;
+}
+.disaster-gauge-head strong.gauge-warn { color: #fb923c; }
+.disaster-gauge-head strong.gauge-danger { color: #f87171; }
+.disaster-gauge-bar {
+  height: 8px; border-radius: 6px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.disaster-gauge-fill {
+  height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, #4ade80, #ffd166);
+  transition: width 0.35s ease;
+}
+.disaster-gauge-fill.warn { background: linear-gradient(90deg, #facc15, #fb923c); }
+.disaster-gauge-fill.danger { background: linear-gradient(90deg, #fb923c, #f87171); }
+.disaster-gauge-hint {
+  display: block; margin-top: 6px;
+  font-size: 12px; color: #9a8a70;
+}

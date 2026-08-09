@@ -4,6 +4,10 @@ import type {
   OreQuality, Difficulty, BuffId, EquipmentInstance, BmStockItem, Rating,
 } from "./items";
 
+export type DisasterMode = "gauge" | "random";
+
+// 灾难模式：累计值（默认，靠道具压条）/ 随机概率（旧模式）
+
 export type RunPhase =
   | "idle" | "descending" | "observe" | "drilling" | "result"
   | "hazard" | "anomaly" | "bandit" | "blackmarket" | "gameover" | "surfaced"
@@ -40,6 +44,7 @@ export type RunConfig = {
   archetype: ArchetypeId | null;  // 流派（未解锁/未选为 null）
   seed: string;                  // 本局种子（每日挑战/固定种子用）
   challenge: ChallengeId[];      // 挑战词缀
+  disasterMode: DisasterMode;      // 灾难模式：累计值 / 随机概率
 };
 
 // ================= v4：流派 =================
@@ -188,6 +193,8 @@ export type UiSnapshot = {
   combo: number;
   supports: number;
   disasterGuard: number;              // v5：应急锚点剩余保护层数（0 = 未激活）
+  disasterMode: DisasterMode;          // v6：灾难模式
+  disasterGauge: number;              // v6：灾难累计值 0..100（累计值模式）
   detectors: number;
   slots: number;                // 总格子数
   usedSlots: number;            // 已用格子
@@ -209,6 +216,7 @@ export type UiSnapshot = {
   base: ForwardBaseView | null;        // 前进营地（phase === "base" 时非空）
   boss: BossView | null;               // 区域 Boss（phase === "boss" 时非空）
   evac: EvacInfo | null;
+  evacPoint: { depth: number; special: boolean; cost: number } | null; // v6：当前深度是否为撤离点
   riskRange: RiskRange | null;         // 当前层修正后风险区间
   retreatBlocked: number;              // 撤退封锁剩余层数
   cautiousCooldown: number;            // 稳妥模式冷却（剩余层数）
@@ -243,6 +251,7 @@ export type UiSnapshot = {
   surfaced: {
     banked: number; depth: number; totalBanked: number; best: boolean;
     rating: Rating | null; bonusCash: number; pocketReturn: number;
+    evac: "normal" | "special" | null;   // v6：撤离方式
   } | null;
   log: LogEntry[];
   drilling: { progress: number; mode: "cautious" | "standard" | "overload"; hardness: number; heat: number; canStop: boolean } | null;

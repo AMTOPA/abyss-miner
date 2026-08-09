@@ -1,5 +1,6 @@
 import {
-  CHECKPOINTS, ORES, backpackStats, detectionStats, drillStats,
+  CHECKPOINTS, EVAC_DEPTHS, ORES, SPECIAL_EVAC_DEPTHS, backpackStats, detectionStats, drillStats,
+  evacCost, isEvacDepth, isSpecialEvacDepth,
   fmt, fmtCombo, persistSave, safetyStats, stageForDepth, supportStats,
 } from "./config";
 import type { OreId, OreStack, SaveData } from "./config";
@@ -18,7 +19,7 @@ import type {
   BmStockItem, BuffId, Difficulty, EquipmentInstance, EquipmentStats, OreQuality,
 } from "./items";
 import type {
-  ArchetypeId, BagSlot, BlackMarketView, BossView, ChallengeId, DailyTaskView,
+  ArchetypeId, BagSlot, BlackMarketView, BossView, ChallengeId, DailyTaskView, DisasterMode,
   EngineCallbacks, EvacInfo, ForwardBaseView, LogEntry, ModuleChoice, ModuleId, RevealLevel,
   RiskRange, RoomId, RoomView, RouteChoice, RunConfig, RunPhase, RunResult, UiSnapshot,
 } from "./types";
@@ -38,9 +39,6 @@ const MILK_RISK = [0.1, 0.2, 0.35, 0.55];
 const PENETRATE_BASE: Record<DrillMode, number> = { cautious: 0.04, standard: 0.1, overload: 0.2 };
 const PENETRATE_DECAY = 0.55;
 const PENETRATE_CAP = 10;
-
-// 黑市固定出现点（检查点层）
-const BM_DEPTHS = [100, 300, 600, 1000];
 
 // 可复现随机（用于画面装饰，保证同一层不闪烁）
 export function mulberry32(seed: number) {
@@ -80,7 +78,7 @@ export class MinerGame {
   private audio: AudioEngine;
   private cb: EngineCallbacks;
   private save: SaveData;
-  private config: RunConfig = { difficulty: "normal", pocket: 0, buffs: [], equipment: [], items: [], archetype: null, seed: "", challenge: [] };
+  private config: RunConfig = { difficulty: "normal", pocket: 0, buffs: [], equipment: [], items: [], archetype: null, seed: "", challenge: [], disasterMode: "gauge" };
   private equipStats: EquipmentStats = { ...EMPTY_EQUIP_STATS };
   private raf = 0;
   private lastTime = 0;
@@ -108,6 +106,13 @@ export class MinerGame {
   private gasImmune = false;
   private shieldActive = false;
   private disasterGuardLayers = 0; // v5：应急锚点剩余保护层数（50m = 5 层）
+  private disasterMode: DisasterMode = "gauge";   // v6：灾难模式（累计值 / 随机概率）
+  private disasterGauge = 0;                       // v6：灾难累计值 0..100
+  private gaugeGainMult = 1;                       // v6：累计值增速修正（增益/道具）
+  private evacAvailable = false;                   // v6：当前深度是否为撤离点
+  private evacSpecial = false;                     // v6：是否特殊撤离点
+  private evacCost = 0;                            // v6：特殊撤离所需现金
+  private evacSuppliedDepth = -1;                  // v6：已触发补给的撤离点深度
   private pierceBuff = 0;
   private qualityBonus = 0;
   private valueBonus = 0;
@@ -310,6 +315,13 @@ export class MinerGame {
     this.creditUsed = false;
     this.moduleMilestoneDone = [];
     this.bmDiscountRun = 0;
+    this.disasterMode = config.disasterMode ?? "gauge";
+    this.disasterGauge = 0;
+    this.gaugeGainMult = this.hasBuff("gauge_less") ? 0.6 : 1;
+    this.evacAvailable = false;
+    this.evacSpecial = false;
+    this.evacCost = 0;
+    this.evacSuppliedDepth = -1;
 
     // 装备加成汇总（实例自带 tier 缩放属性）
     this.equipStats = mergeEquipStats(...config.equipment.map((e) => e.stats));
@@ -360,7 +372,7 @@ export class MinerGame {
     const ds = drillStats(save.upgrades.drill);
     this.maxDurability = ds.maxDurability;
     this.durability = ds.maxDurability;
-    this.maxPower = this.hasBuff("fuel") ? 140 : 100;
+    this.maxPower = this.hasBuff("fuel") ? 175 : 135;
     this.power = this.maxPower;
 
     const bs = backpackStats(save.upgrades.backpack);
@@ -484,6 +496,10 @@ export class MinerGame {
         this.disasterGuardLayers = 5; // 50m = 5 层
         this.logAdd("应急锚点展开：接下来 50m 内灾难事故降级为严重事故", "good");
         break;
+      case "stabilize":
+        this.disasterGauge = Math.max(0, this.disasterGauge - 30);
+        this.logAdd(`${def.name}：灾难累计值 -30（当前 ${Math.round(this.disasterGauge)}）`, "good");
+        break;
     }
     this.bag.splice(idx, 1);
     this.audio.play("support");
@@ -593,10 +609,12 @@ export class MinerGame {
     this.audio.play("milking");
     this.logAdd(`榨取矿脉 +${fmt(value)}（第 ${this.milkCount} 次）`, "good");
     const risk = Math.min(0.85, this.baseRisk() + extraRisk + (this.slotRatio() >= 1 ? 0.08 : 0));
-    if (this.rnd() < risk) {
+    const milkSev = this.rollRisk(risk);
+    if (this.runEnded) return;
+    if (milkSev) {
       this.audio.play("warning");
       this.logAdd("榨取时岩层剧烈震动……", "warn");
-      this.applyAccident(this.rollSeverity(risk));
+      this.applyAccident(milkSev);
     }
     if (this.runEnded) return;
     this.pushUi();
@@ -746,7 +764,8 @@ export class MinerGame {
     }
     this.pocket -= cost;
     this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.4);
-    this.logAdd("黑市维修完成：耐久 +40%", "good");
+    this.power = Math.min(this.maxPower, this.power + 30);
+    this.logAdd("黑市维修完成：耐久 +40%，电量 +30", "good");
     this.audio.play("support");
     persistSave(this.save);
     this.pushUi();
@@ -1003,6 +1022,8 @@ export class MinerGame {
   // 进入下一层（10m），并根据深度触发：检查点营地 / Boss / 模块 / 路线分岔 / 特殊房间
   private advanceLayer(): void {
     this.depth += 10;
+    this.refreshEvac();
+    if (this.evacAvailable) this.applyEvacSupply();
     this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
     this.cautiousCooldown = Math.max(0, this.cautiousCooldown - 1);
     this.creatureImmune = Math.max(0, this.creatureImmune - 1);
@@ -1371,7 +1392,8 @@ export class MinerGame {
     switch (optionId) {
       case "repair":
         this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.2);
-        this.logAdd("营地检修：耐久 +20%", "good");
+        this.power = Math.min(this.maxPower, this.power + 30);
+        this.logAdd("营地检修：耐久 +20%，电量 +30", "good");
         break;
       case "storage":
         this.slots += 3;
@@ -1506,6 +1528,91 @@ export class MinerGame {
     return "minor";
   }
 
+  // v6：灾难风险统一入口 —— 累计值模式（默认）与随机概率模式（旧）
+  private rollRisk(risk: number): "minor" | "severe" | "disaster" | null {
+    if (this.disasterMode === "gauge") return this.gaugeRoll(risk);
+    return this.rnd() < risk ? this.rollSeverity(risk) : null;
+  }
+
+  // v6：累计值模式 —— 每层按风险积累"灾难累计值"，满 100 触发灾难；
+  // 小事故/严重事故仍按原概率发生，可用"岩压稳定剂"等道具压条
+  private gaugeRoll(risk: number): "minor" | "severe" | null {
+    const delta = Math.min(16, Math.max(0.8, risk * 100 * 0.13)) * this.gaugeGainMult * DIFFICULTY_DEFS[this.difficulty].gaugeMult;
+    this.addGauge(delta);
+    if (this.rnd() >= risk) return null;
+    return this.rnd() < 0.55 ? "minor" : "severe";
+  }
+
+  private addGauge(delta: number): void {
+    if (this.disasterMode !== "gauge") return;
+    this.disasterGauge = Math.min(100, this.disasterGauge + delta);
+    if (this.disasterGauge >= 100) {
+      this.logAdd(`灾难累计值已满（${Math.round(this.disasterGauge)}）！岩层开始剧烈坍塌…`, "warn");
+      this.triggerGaugeDisaster();
+    }
+  }
+
+  // v6：累计值满触发灾难，护盾/锚点/高级支撑架可抵挡一次并清零
+  private triggerGaugeDisaster(): void {
+    if (this.disasterGuardLayers > 0) {
+      this.disasterGauge = 0;
+      this.logAdd("应急锚点撑住了岩层！灾难累计值清零", "good");
+      this.applyAccident("severe");
+      return;
+    }
+    const ss = supportStats(this.save.upgrades.support);
+    if (!this.megaShieldUsed && ss.megaShield) {
+      this.megaShieldUsed = true;
+      this.disasterGauge = 0;
+      this.logAdd("高级支撑架替你抵挡了灾难！累计值清零", "good");
+      this.applyAccident("severe");
+      return;
+    }
+    if (this.shieldActive) {
+      this.shieldActive = false;
+      this.disasterGauge = 0;
+      this.logAdd("应急护盾替你抵挡了灾难！累计值清零", "good");
+      this.applyAccident("severe");
+      return;
+    }
+    this.endByDisaster("灾难累计值已满");
+  }
+
+  // v6：刷新当前深度的撤离点状态
+  private refreshEvac(): void {
+    this.evacAvailable = isEvacDepth(this.depth);
+    this.evacSpecial = isSpecialEvacDepth(this.depth);
+    this.evacCost = evacCost(this.depth);
+  }
+
+  // v6：到达撤离点时的补给（每个撤离点只触发一次）
+  private applyEvacSupply(): void {
+    if (this.evacSuppliedDepth === this.depth) return;
+    this.evacSuppliedDepth = this.depth;
+    this.power = Math.min(this.maxPower, this.power + 30);
+    this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.15);
+    this.audio.play("success");
+    this.logAdd(this.evacSpecial
+      ? `抵达特殊撤离点 ${this.depth}m！补给生效（电量 +30，耐久 +15%）`
+      : `抵达撤离点 ${this.depth}m！补给生效（电量 +30，耐久 +15%）`, "good");
+  }
+
+  // v6：从撤离点撤离（普通免费 / 特殊需缴纳现金）
+  evacuate(special: boolean): void {
+    if (this.phase !== "observe" && this.phase !== "result") return;
+    if (!this.evacAvailable) return;
+    if (special) {
+      if (!this.evacSpecial) return;
+      if (this.pocket < this.evacCost) {
+        this.logAdd(`特殊撤离需要缴纳 ${fmt(this.evacCost)} 现金`, "bad");
+        this.audio.play("warning");
+        return;
+      }
+      this.pocket -= this.evacCost;
+    }
+    this.finishRun({ evac: special ? "special" : "normal" });
+  }
+
   private applyAccident(severity: "minor" | "severe" | "disaster"): void {
     if (severity === "minor") {
       this.durability = Math.max(0, this.durability - 10);
@@ -1552,7 +1659,7 @@ export class MinerGame {
     this.endByDisaster();
   }
 
-  private endByDisaster(): void {
+  private endByDisaster(reason = "灾难事故"): void {
     const lossMult = this.anomalyDoubleLoss
       ? Math.min(0.95, safetyStats(this.save.upgrades.safety).disasterLoss * 2)
       : safetyStats(this.save.upgrades.safety).disasterLoss;
@@ -1588,7 +1695,7 @@ export class MinerGame {
     this.flashColor = "#ff2200";
     this.logAdd(`灾难事故！损失 ${fmt(lost)}，救援队带回 ${fmt(saved)}`, "bad");
     this.gameoverInfo = {
-      reason: "灾难事故",
+      reason,
       lost: Math.round(lost),
       saved,
       depth: depthAt,
@@ -1626,8 +1733,9 @@ export class MinerGame {
     this.save.warehouseStacks = [...map.values()];
   }
 
-  private finishRun(): void {
+  private finishRun(opts: { evac?: "normal" | "special" } = {}): void {
     if (this.runEnded) return;
+    const evacKind = opts.evac ?? null;
     const challengeMult = this.challenge.reduce((m, c) => m * (CHALLENGE_DEFS[c]?.rewardMult ?? 1), 1);
     const banked = Math.round(this.loadValue);
     const depthAt = this.depth;
@@ -1641,7 +1749,10 @@ export class MinerGame {
     this.save.cash += pocketReturn;
     // 评级：深度 × 货值 × 生存完整度（只奖励现金）
     const rating = computeRating(depthAt, banked, this.durability / Math.max(1, this.maxDurability), this.difficulty);
-    const bonusCash = rating.bonusCash + Math.round(banked * (challengeMult - 1));
+    let bonusCash = rating.bonusCash + Math.round(banked * (challengeMult - 1));
+    // v6：撤离点撤离奖励（普通 ×1.25，特殊 ×2.2 + 深度现金）
+    if (evacKind === "normal") bonusCash = Math.round(bonusCash * 1.25);
+    else if (evacKind === "special") bonusCash = Math.round(bonusCash * 2.2) + Math.round(depthAt * 1.2);
     this.save.cash += bonusCash;
     const wasBest = banked > this.save.stats.bestRunValue;
     this.save.stats.runs++;
@@ -1654,7 +1765,7 @@ export class MinerGame {
     this.audio.stopDrill();
     this.audio.play("success");
     this.phase = "surfaced";
-    this.logAdd(`安全返回地面，共入库 ${fmt(banked)}`, "good");
+    this.logAdd(evacKind ? `已从${evacKind === "special" ? "特殊" : ""}撤离点撤离，共入库 ${fmt(banked)}` : `安全返回地面，共入库 ${fmt(banked)}`, "good");
     this.surfacedInfo = {
       banked,
       depth: depthAt,
@@ -1663,6 +1774,7 @@ export class MinerGame {
       rating: rating.grade,
       bonusCash,
       pocketReturn,
+      evac: evacKind,
     };
     const snap = this.buildSnapshot();
     this.cb.onUi(snap);
@@ -1815,7 +1927,7 @@ export class MinerGame {
 
       this.combo = Math.min(5, this.combo + comboDelta);
 
-      const powerBase = (7 + l.hardness * 1.6) * (mode === "cautious" ? 1.2 : mode === "standard" ? 1 : 1.5);
+      const powerBase = (5.5 + l.hardness * 1.15) * (mode === "cautious" ? 1.05 : mode === "standard" ? 0.9 : 1.35);
       const heatMult = 1 + this.overheat * 0.003;
       // 幻影钻头：穿透不消耗额外电量
       const powerMult = mode === "overload" && this.ghostBit ? 0.35 : 1;
@@ -1828,7 +1940,7 @@ export class MinerGame {
       // 温和难度无设备损耗
       if (DIFFICULTY_DEFS[this.difficulty].wear) {
         const wearRed = 1 - this.wearReduce / 100;
-        const durLoss = (5 + l.hardness * 2) * (mode === "cautious" ? 0.7 : mode === "standard" ? 1 : 1.6)
+        const durLoss = (4 + l.hardness * 1.4) * (mode === "cautious" ? 0.6 : mode === "standard" ? 0.9 : 1.4)
           * ds.durabilityLossMult * (1 + this.overheat * 0.004) * wearRed;
         this.durability = Math.max(0, this.durability - durLoss);
       }
@@ -1857,7 +1969,7 @@ export class MinerGame {
           }
         } else {
           const ss = safetyStats(this.save.upgrades.safety);
-          const drain = (16 + 10 * l.hazardSeverity) * (1 - ss.gasResist);
+          const drain = (13 + 8 * l.hazardSeverity) * (1 - ss.gasResist);
           this.power = Math.max(0, this.power - drain);
           this.audio.play("warning");
           events.push(`毒气泄漏！电量 -${Math.round(drain)}`);
@@ -1883,7 +1995,11 @@ export class MinerGame {
       if (this.archetype === "survivor") risk *= 0.92;
 
       this.anomalyDoubleLoss = double;
-      const severity = this.rnd() < risk ? this.rollSeverity(risk) : null;
+      const severity = this.rollRisk(risk);
+      if (this.runEnded) return;
+      // v6：超载钻进额外推高灾难累计值
+      if (this.disasterMode === "gauge" && mode === "overload") this.addGauge(2.5);
+      if (this.runEnded) return;
       if (severity) {
         this.audio.play("warning");
         this.applyAccident(severity);
@@ -1925,6 +2041,8 @@ export class MinerGame {
         this.depth += 10;
         this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
         this.cautiousCooldown = Math.max(0, this.cautiousCooldown - 1);
+        this.refreshEvac();
+        if (this.evacAvailable) this.applyEvacSupply();
         const det = detectionStats(this.save.upgrades.detection);
         this.layer = this.genLayer(this.depth, Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100));
         this.milkCount = 0;
@@ -1947,8 +2065,14 @@ export class MinerGame {
     this.anomalyDouble = false;
     this.anomalyDoubleLoss = false;
 
-    // 检查点层必出黑市 + 每层 15% 随机黑市（禁黑市挑战除外）
-    this.canBlackMarket = !this.challenge.includes("no_blackmarket") && (BM_DEPTHS.includes(this.depth) || this.rnd() < 0.15);
+    // v6：黑市不再固定在检查点层，每层 15% 随机出现（禁黑市挑战除外）
+    this.canBlackMarket = !this.challenge.includes("no_blackmarket") && this.rnd() < 0.15;
+
+    // v6：撤离点刷新与补给（到达撤离点恢复部分电量/耐久）
+    this.refreshEvac();
+    if (this.evacAvailable) this.applyEvacSupply();
+    // v6：每层结算后小幅恢复电量，缓解续航压力
+    this.power = Math.min(this.maxPower, this.power + 3);
 
     if (layers > 1) {
       this.floatTexts.push({
@@ -2223,6 +2347,8 @@ export class MinerGame {
       combo: Math.round(this.combo * 100) / 100,
       supports: this.supports,
       disasterGuard: this.disasterGuardLayers,
+      disasterMode: this.disasterMode,
+      disasterGauge: Math.round(this.disasterGauge),
       detectors: this.detectors,
       slots: this.slots,
       usedSlots: this.usedSlots(),
@@ -2241,6 +2367,7 @@ export class MinerGame {
       base: this.baseView ? { ...this.baseView, needOre: this.baseView.needOre ? { ...this.baseView.needOre } : null, options: this.baseView.options.map((o) => ({ ...o })) } : null,
       boss: this.buildBossView(),
       evac: this.buildEvac(),
+      evacPoint: this.evacAvailable ? { depth: this.depth, special: this.evacSpecial, cost: this.evacCost } : null,
       riskRange: this.buildRiskRange(),
       cautiousCooldown: this.cautiousCooldown,
       canBlackMarket: this.canBlackMarket,

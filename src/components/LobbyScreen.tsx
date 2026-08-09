@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ARCHETYPES, ARCHETYPE_ORDER } from "@/game/content";
 import { CHECKPOINTS, checkpointCost, fmt, persistSave, type SaveData } from "@/game/config";
 import type { AuthUser } from "@/lib/api";
-import type { ArchetypeId, ChallengeId, RunConfig } from "@/game/types";
+import type { ArchetypeId, ChallengeId, DisasterMode, RunConfig } from "@/game/types";
 import {
   BUFF_DEFS, BUFF_ORDER, BUFF_RANDOM_PRICE, type BuffId,
   CONSUMABLES,
@@ -117,13 +117,14 @@ export default function LobbyScreen(props: LobbyProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [depth, setDepth] = useState(0);
   const [difficulty, setDifficulty] = useState<Difficulty>("normal");
-  const [pocket, setPocket] = useState(() => Math.min(1000, Math.floor(Math.max(0, save.cash) / 50) * 50));
+  const [pocket, setPocket] = useState(0);
   const [buffs, setBuffs] = useState<BuffId[]>([]);
   const [drawFlags, setDrawFlags] = useState<Record<string, boolean>>({});
   const [carried, setCarried] = useState<string[]>([]);
   const [archetype, setArchetype] = useState<ArchetypeId | null>(() => defaultArchetype(save));
   const [challenge, setChallenge] = useState<ChallengeId[]>([]);
   const [seedMode, setSeedMode] = useState<SeedMode>("random");
+  const [disasterMode, setDisasterMode] = useState<DisasterMode>("gauge");
 
   const maxPocket = Math.min(5000, Math.max(0, save.cash));
   const pocketShown = Math.max(0, Math.min(pocket, maxPocket));
@@ -186,7 +187,7 @@ export default function LobbyScreen(props: LobbyProps) {
   };
 
   const quickStart = () => {
-    const quickPocket = Math.min(500, Math.max(0, save.cash));
+    const quickPocket = 0; // v6：默认不自动携带现金
     launch(0, {
       difficulty: "normal",
       pocket: quickPocket,
@@ -196,6 +197,7 @@ export default function LobbyScreen(props: LobbyProps) {
       archetype: recommendedArchetype,
       seed: randomSeed(),
       challenge: [],
+      disasterMode: "gauge",
     }, 0, []);
   };
 
@@ -210,6 +212,7 @@ export default function LobbyScreen(props: LobbyProps) {
       archetype,
       seed: makeSeed(seedMode),
       challenge,
+      disasterMode,
     }, totalCost, carried);
   };
 
@@ -218,7 +221,7 @@ export default function LobbyScreen(props: LobbyProps) {
       <div className="quickstart-bar">
         <div className="quickstart-copy">
           <span className="quickstart-kicker">推荐配置</span>
-          <strong>普通难度 · 地面出发 · 携带 {fmt(Math.min(500, Math.max(0, save.cash)))} 现金</strong>
+          <strong>普通难度 · 地面出发 · 携带 0 现金</strong>
           <span>无增益 / 无道具 · 当前装备 · {recommendedArchetype ? `${ARCHETYPES[recommendedArchetype].icon} ${ARCHETYPES[recommendedArchetype].name}` : "自由矿工"}</span>
         </div>
         <button type="button" className="btn btn-primary btn-big quickstart-button" onClick={quickStart}>⚡ 快速出发</button>
@@ -268,6 +271,13 @@ export default function LobbyScreen(props: LobbyProps) {
                 const locked = id === "hardcore" && !hardcoreUnlocked;
                 return <button key={id} type="button" className={`diff-card ${difficulty === id ? "on" : ""} ${id}`} disabled={locked} onClick={() => setDifficulty(id)}><span className="diff-icon">{def.icon}</span><span className="diff-name">{def.name}</span><span className="diff-desc">{locked ? "未解锁 · 需最深 300m" : def.desc}</span><span className="diff-reward">收益 ×{def.incomeMult}</span></button>;
               })}</div>
+            </section>
+            <section className="deploy-section">
+              <h3 className="deploy-section-title"><span className="sec-num">5.5</span> 灾难模式</h3>
+              <div className="diff-grid">
+                <button type="button" className={`diff-card ${disasterMode === "gauge" ? "on" : ""} gauge`} onClick={() => setDisasterMode("gauge")}><span className="diff-icon">🌡️</span><span className="diff-name">累计值</span><span className="diff-desc">默认 · 岩压随深度累积，满 100 触发灾难；可用「岩压稳定剂」等压条</span><span className="diff-reward">可控</span></button>
+                <button type="button" className={`diff-card ${disasterMode === "random" ? "on" : ""} random`} onClick={() => setDisasterMode("random")}><span className="diff-icon">🎲</span><span className="diff-name">随机概率</span><span className="diff-desc">旧模式 · 每层按风险随机判定灾难，无法预判</span><span className="diff-reward">随机</span></button>
+              </div>
             </section>
           </div>
 

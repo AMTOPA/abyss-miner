@@ -81,8 +81,8 @@ export function upgradeCost(def: UpgradeDef, level: number): number {
 
 export function drillStats(level: number) {
   return {
-    maxDurability: 100 + 15 * level,
-    durabilityLossMult: Math.max(0.55, 1 - 0.035 * level),
+    maxDurability: 130 + 18 * level,
+    durabilityLossMult: Math.max(0.5, 1 - 0.04 * level),
     overloadGain: 0.02 * level,
   };
 }
@@ -124,6 +124,21 @@ export function supportStats(level: number) {
 // ---------- 检查点 ----------
 
 export const CHECKPOINTS = [0, 100, 300, 600, 1000];
+// ---------- 撤离点（v6：搜打撤） ----------
+// 固定撤离点：每 100m 偏移 50m（避开检查点营地 100/300/600/1000）
+export const EVAC_DEPTHS = [50, 150, 250, 350, 450, 550, 650, 750, 850, 950];
+// 特殊撤离点（需缴纳随身现金，收益更高）
+export const SPECIAL_EVAC_DEPTHS = [250, 550, 850];
+
+export function isEvacDepth(depth: number): boolean {
+  return EVAC_DEPTHS.includes(depth);
+}
+export function isSpecialEvacDepth(depth: number): boolean {
+  return SPECIAL_EVAC_DEPTHS.includes(depth);
+}
+export function evacCost(depth: number): number {
+  return Math.round(80 + depth * 0.6);
+}
 
 export function checkpointCost(depth: number): number {
   return Math.round(depth * 0.6);

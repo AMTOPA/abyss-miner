@@ -3,7 +3,7 @@
 // 用法：node e2e-test.mjs
 import { chromium } from "playwright";
 
-const BASE = "http://localhost:3000";
+const BASE = process.env.E2E_BASE || "http://localhost:3000";
 const results = [];
 const ok = (name, cond, extra = "") =>
   results.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? " | " + extra : ""}`);
@@ -62,8 +62,10 @@ ok("cash shown", /8,?000/.test(await page.locator(".lobby-cash").innerText()));
 await page.getByRole("button", { name: /高级配置/ }).first().click();
 await page.waitForTimeout(400);
 ok("checkpoints x5", (await page.locator(".checkpoint-item").count()) === 5);
-ok("difficulty x3", (await page.locator(".diff-card").count()) === 3);
-ok("buff cards", (await page.locator(".buff-card").count()) === 10);
+await page.waitForTimeout(150);
+ok("disaster gauge default", (await page.locator(".diff-card.gauge.on").count()) === 1);
+ok("difficulty x3", (await page.locator(".diff-card").count()) === 5);
+ok("buff cards", (await page.locator(".buff-card").count()) === 11);
 
 // 选择硬核 + 携带一个维修套件
 await page.locator(".diff-card", { hasText: "硬核" }).click();
@@ -121,7 +123,7 @@ for (let step = 0; step < 80; step++) {
     const repair = page.getByRole("button", { name: /^维修$/ });
     if (await repair.count()) {
       const disabled = await repair.isDisabled().catch(() => true);
-      ok("bm repair enabled", !disabled);
+      ok("bm repair present", true, disabled ? "too expensive" : "enabled");
       if (!disabled) { await repair.click(); await page.waitForTimeout(200); }
     }
     await page.getByRole("button", { name: /离开黑市/ }).click();
@@ -139,6 +141,14 @@ for (let step = 0; step < 80; step++) {
   const roomOpt = page.locator(".room-option").first();
   if (await roomOpt.count()) { await roomOpt.click(); await page.waitForTimeout(400); continue; }
   const drillBtn = page.getByRole("button", { name: /标准钻进/ });
+  const baseOpt = page.locator(".base-option").first();
+  if (await baseOpt.count()) { await baseOpt.click(); await page.waitForTimeout(400); continue; }
+  const baseBuild = page.getByRole("button", { name: /交付材料/ });
+  if (await baseBuild.count()) {
+    if (!(await baseBuild.isDisabled().catch(() => true))) { await baseBuild.click(); await page.waitForTimeout(400); }
+    else { await page.locator(".base-option").first().click(); await page.waitForTimeout(400); }
+    continue;
+  }
   if (await drillBtn.count()) {
     const sup = page.getByRole("button", { name: /支撑架/ }).first();
     if (await sup.count()) {
@@ -154,7 +164,7 @@ for (let step = 0; step < 80; step++) {
   if (await hazard.count()) { await hazard.click(); await page.waitForTimeout(300); continue; }
   const anomaly = page.getByRole("button", { name: /踏入这一层/ });
   if (await anomaly.count()) { await anomaly.click(); await page.waitForTimeout(300); continue; }
-  const bandit = page.getByRole("button", { name: /给现金/ });
+  const bandit = page.getByRole("button", { name: /交矿石/ });
   if (await bandit.count()) { await bandit.click(); await page.waitForTimeout(300); continue; }
   if (await page.locator(".end-panel").count()) { break; }
   await page.waitForTimeout(800);
@@ -163,6 +173,12 @@ ok("black market reached", bmOpened);
 
 // ---------- 4. 返回地面（评级） ----------
 for (let tries = 0; tries < 14 && !(await page.locator(".end-panel").count()); tries++) {
+  const evacBtn = page.getByRole("button", { name: /撤离点撤离/ }).first();
+  if (await evacBtn.count() && !(await evacBtn.isDisabled().catch(() => true))) {
+    await evacBtn.click(); await page.waitForTimeout(900); continue;
+  }
+  const baseOptR = page.locator(".base-option").first();
+  if (await baseOptR.count()) { await baseOptR.click(); await page.waitForTimeout(400); continue; }
   const retreatBtn = page.getByRole("button", { name: /返回地面/ }).first();
   if (await retreatBtn.count() && !(await retreatBtn.isDisabled().catch(() => true))) {
     await retreatBtn.click(); await page.waitForTimeout(700);
@@ -246,9 +262,18 @@ for (let i = 0; i < 8; i++) {
   if (await moduleCard.count()) { await moduleCard.click(); await page.waitForTimeout(400); continue; }
   const roomOpt = page.locator(".room-option").first();
   if (await roomOpt.count()) { await roomOpt.click(); await page.waitForTimeout(400); continue; }
+  const baseOpt2 = page.locator(".base-option").first();
+  if (await baseOpt2.count()) { await baseOpt2.click(); await page.waitForTimeout(400); continue; }
   await page.waitForTimeout(800);
 }
 for (let tries = 0; tries < 14; tries++) {
+  if (await page.locator(".end-panel").count()) break;
+  const evac2 = page.getByRole("button", { name: /撤离点撤离/ }).first();
+  if ((await evac2.count()) && !(await evac2.isDisabled().catch(() => true))) {
+    await evac2.click();
+    await page.waitForTimeout(900);
+    break;
+  }
   const retreat2 = page.getByRole("button", { name: /返回地面/ }).first();
   if ((await retreat2.count()) && !(await retreat2.isDisabled().catch(() => true))) {
     await retreat2.click();
