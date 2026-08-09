@@ -7,6 +7,7 @@ import { CONSUMABLES, ORE_QUALITIES, OreQuality, parseOreKey } from "@/game/item
 type Props = {
   save: SaveData;
   onSave: (next: SaveData) => void;
+  onGoLoadout?: () => void;   // 跳转到「装备」页签穿戴
 };
 
 type OreRow = OreStack & {
@@ -15,7 +16,7 @@ type OreRow = OreStack & {
   total: number; // 该堆总价值（锁定单价 × 数量）
 };
 
-export default function WarehousePanel({ save, onSave }: Props) {
+export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
   // 每堆矿石都锁定开采当刻的单价，价格不随历史最深纪录/市场波动
   const oreRows = useMemo<OreRow[]>(() => {
     const rows: OreRow[] = [];
@@ -115,8 +116,13 @@ export default function WarehousePanel({ save, onSave }: Props) {
       <section className="deploy-section">
         <h3 className="deploy-section-title">装备</h3>
         <div className="wh-total">
-          已拥有装备：<span className="cyan">{save.warehouseEquipment.length}</span> 件（详情见「装备」页签）
+          已拥有装备：<span className="cyan">{save.warehouseEquipment.length}</span> 件
         </div>
+        {onGoLoadout && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onGoLoadout}>
+            🎒 前往装备页签穿戴/管理
+          </button>
+        )}
       </section>
     </div>
   );

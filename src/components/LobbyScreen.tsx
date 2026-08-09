@@ -13,11 +13,12 @@ import {
   type EquipmentStats, mergeEquipStats,
 } from "@/game/items";
 import CodexPanel from "./CodexPanel";
+import ForgePanel from "./ForgePanel";
 import LoadoutPanel from "./LoadoutPanel";
 import ShopPanel from "./ShopPanel";
 import WarehousePanel from "./WarehousePanel";
 
-export type LobbyTab = "deploy" | "warehouse" | "shop" | "loadout" | "codex" | "leaderboard" | "settings";
+export type LobbyTab = "deploy" | "warehouse" | "shop" | "loadout" | "forge" | "codex" | "leaderboard" | "settings";
 export type LobbyProps = {
   save: SaveData;
   user: AuthUser | null;
@@ -40,6 +41,7 @@ const TABS: Array<{ id: LobbyTab; name: string; icon: string }> = [
   { id: "warehouse", name: "仓库", icon: "🏦" },
   { id: "shop", name: "商店", icon: "🛒" },
   { id: "loadout", name: "装备", icon: "🎒" },
+  { id: "forge", name: "锻造", icon: "🔨" },
   { id: "codex", name: "图鉴", icon: "📖" },
   { id: "leaderboard", name: "排行榜", icon: "🏆" },
   { id: "settings", name: "设置", icon: "⚙️" },
@@ -76,6 +78,18 @@ function isArchetypeUnlocked(id: ArchetypeId, save: SaveData): boolean {
 
 function defaultArchetype(save: SaveData): ArchetypeId | null {
   return ARCHETYPE_ORDER.find((id) => isArchetypeUnlocked(id, save)) ?? null;
+}
+
+// 流派解锁进度文案（用于锁定卡片提示）
+function archetypeProgress(id: ArchetypeId, save: SaveData): string {
+  const s = save.stats;
+  switch (id) {
+    case "hunter": return "当前最深 " + s.bestDepth + "/200m";
+    case "overdriver": return "当前超载 " + s.overloadDrills + "/3 次";
+    case "scavenger": return "当前黑市交易 " + s.bmTrades + "/10 次";
+    case "survivor": return "当前异常遭遇 " + s.anomaliesSeen + "/3 次";
+    default: return "";
+  }
 }
 
 function randomSeed(): string {
@@ -218,7 +232,7 @@ export default function LobbyScreen(props: LobbyProps) {
           <div className="archetype-grid">{ARCHETYPE_ORDER.map((id) => {
             const def = ARCHETYPES[id];
             const unlocked = isArchetypeUnlocked(id, save);
-            return <button key={id} type="button" className={`archetype-card ${archetype === id ? "on" : ""} ${!unlocked ? "locked" : ""}`} disabled={!unlocked} style={{ borderColor: unlocked && archetype === id ? def.color : undefined }} onClick={() => setArchetype(id)}><span className="archetype-icon">{def.icon}</span><span className="archetype-name" style={{ color: unlocked ? def.color : undefined }}>{def.name}</span><span className="archetype-desc">{def.desc}</span><span className="archetype-perks">{unlocked ? def.perkDesc.map((perk) => <small key={perk}>· {perk}</small>) : <small className="archetype-unlock-hint">🔒 {def.unlockHint}</small>}</span></button>;
+            return <button key={id} type="button" className={`archetype-card ${archetype === id ? "on" : ""} ${!unlocked ? "locked" : ""}`} disabled={!unlocked} style={{ borderColor: unlocked && archetype === id ? def.color : undefined }} onClick={() => setArchetype(id)}><span className="archetype-icon">{def.icon}</span><span className="archetype-name" style={{ color: unlocked ? def.color : undefined }}>{def.name}</span><span className="archetype-desc">{def.desc}</span><span className="archetype-perks">{unlocked ? def.perkDesc.map((perk) => <small key={perk}>· {perk}</small>) : <small className="archetype-unlock-hint">🔒 {def.unlockHint}（{archetypeProgress(id, save)}）</small>}</span></button>;
           })}</div>
         </section>
 
@@ -305,9 +319,10 @@ export default function LobbyScreen(props: LobbyProps) {
       <nav className="lobby-tabs">{TABS.map((item) => <button key={item.id} type="button" className={`lobby-tab ${tab === item.id ? "on" : ""}`} onClick={() => setTab(item.id)}>{item.icon} {item.name}</button>)}</nav>
       <div className="lobby-panel">
         {tab === "deploy" && renderDeploy()}
-        {tab === "warehouse" && <WarehousePanel save={save} onSave={onSave} />}
+        {tab === "warehouse" && <WarehousePanel save={save} onSave={onSave} onGoLoadout={() => setTab("loadout")} />}
         {tab === "shop" && <ShopPanel save={save} onSave={onSave} />}
         {tab === "loadout" && <LoadoutPanel save={save} onSave={onSave} />}
+        {tab === "forge" && <ForgePanel save={save} onSave={onSave} />}
         {tab === "codex" && <CodexPanel save={save} />}
         {tab === "leaderboard" && renderLeaderboard()}
         {tab === "settings" && renderSettings()}

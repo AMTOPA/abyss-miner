@@ -56,7 +56,7 @@ await page.reload({ waitUntil: "networkidle" });
 
 // ---------- 1. 大厅 ----------
 await page.waitForSelector(".lobby-tab", { timeout: 8000 });
-ok("lobby tabs", (await page.locator(".lobby-tab").count()) === 7);
+ok("lobby tabs", (await page.locator(".lobby-tab").count()) === 8);
 ok("cash shown", /8,?000/.test(await page.locator(".lobby-cash").innerText()));
 // 展开高级配置后，检查点/难度/增益/携带道具才可见
 await page.getByRole("button", { name: /高级配置/ }).first().click();

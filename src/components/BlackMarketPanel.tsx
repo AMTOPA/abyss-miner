@@ -8,13 +8,14 @@ type Props = {
   view: BlackMarketView;
   onSell: (key: string, count: number) => void;   // 出售矿石 -> 随身现金
   onBuy: (index: number, pay: "cash" | "ore") => void; // 购买货架商品
+  onRefresh: () => void;                           // 付费刷新货架
   onRepair: () => void;                            // 维修耐久
   onClaim: (taskId: string) => void;               // 领取任务奖励（好感 +1）
   onLeave: () => void;                             // 离开黑市
 };
 
 // 黑市面板：出售矿石换随身现金 / 货架双支付购买 / 维修 / 任务板（好感度）
-export default function BlackMarketPanel({ view, onSell, onBuy, onRepair, onClaim, onLeave }: Props) {
+export default function BlackMarketPanel({ view, onSell, onBuy, onRefresh, onRepair, onClaim, onLeave }: Props) {
   const sellRatio = Math.round(view.sellRatio * 100);
   const buyDiscount = Math.round(view.buyDiscount * 100);
   const oreSlots = view.bag.filter((b) => b.kind === "ore");
@@ -73,7 +74,10 @@ export default function BlackMarketPanel({ view, onSell, onBuy, onRepair, onClai
 
         {/* 货架：矿石 / 现金 双支付 */}
         <div className="bm-section">
-          <div className="bm-section-title">🛒 货架</div>
+          <div className="bm-section-title bm-section-title-row">
+            <span>🛒 货架（本局固定，离开不刷新）</span>
+            <button type="button" className="btn btn-sm btn-secondary" disabled={view.pocket < view.refreshCost} onClick={onRefresh} title="消耗随身现金，重新随机货架">🔄 刷新货架（{fmt(view.refreshCost)} 现金）</button>
+          </div>
           <div className="bm-stock">
             {view.stock.map((item, i) => {
               const oreKey = oreStackKey(item.oreCost.id, item.oreCost.quality);

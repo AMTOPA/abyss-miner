@@ -115,6 +115,7 @@ export class MinerGame {
   private banditReduce = 0;
   private canBlackMarket = false;
   private bmStock: BmStockItem[] = [];
+  private bmGenerated = false;  // 本局黑市货架是否已生成（首次生成后固定，可付费刷新）
   private milkCount = 0;
   private supportsUsedThisLayer = false;
   private retreatBlocked = 0;
@@ -269,6 +270,7 @@ export class MinerGame {
     this.scaredThisRun = 0;
     this.canBlackMarket = false;
     this.bmStock = [];
+    this.bmGenerated = false;
     this.bag = [];
     this.loadValue = 0;
     this.lastResult = null;
@@ -649,10 +651,14 @@ export class MinerGame {
     }
     if (this.phase !== "result" || !this.canBlackMarket) return;
     const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
-    this.bmStock = generateBmStock(this.depth, favor, {
-      sellBoost: this.hasBuff("sell_boost"),
-      discount: this.hasBuff("bm_discount") || this.bmDiscountRun > 0,
-    });
+    // 本局首次进入（或货架售罄补货）才生成；离开再进保持原货架，不再每次刷新
+    if (!this.bmGenerated || this.bmStock.length === 0) {
+      this.bmStock = generateBmStock(this.depth, favor, {
+        sellBoost: this.hasBuff("sell_boost"),
+        discount: this.hasBuff("bm_discount") || this.bmDiscountRun > 0,
+      });
+      this.bmGenerated = true;
+    }
     this.phase = "blackmarket";
     this.audio.play("click");
     this.pushUi();
@@ -763,7 +769,32 @@ export class MinerGame {
   bmLeave(): void {
     if (this.phase !== "blackmarket") return;
     this.phase = "result";
-    this.bmStock = [];
+    // 保留货架：本局内再次进入黑市不刷新（付费可手动刷新）
+    this.pushUi();
+  }
+
+  // 刷新货架：消耗随身现金，重新随机生成货架
+  bmRefreshCost(): number {
+    return Math.round(80 + this.depth * 0.6);
+  }
+
+  bmRefresh(): void {
+    if (this.phase !== "blackmarket") return;
+    const cost = this.bmRefreshCost();
+    if (this.pocket < cost) {
+      this.logAdd("随身现金不足，无法刷新货架", "bad");
+      this.audio.play("warning");
+      return;
+    }
+    this.pocket -= cost;
+    const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
+    this.bmStock = generateBmStock(this.depth, favor, {
+      sellBoost: this.hasBuff("sell_boost"),
+      discount: this.hasBuff("bm_discount") || this.bmDiscountRun > 0,
+    });
+    this.bmGenerated = true;
+    this.logAdd("货架已刷新", "good");
+    this.audio.play("click");
     this.pushUi();
   }
 
@@ -1717,6 +1748,7 @@ export class MinerGame {
       sellRatio: blackSellRatio(favor, this.hasBuff("sell_boost")),
       buyDiscount: blackBuyDiscount(favor, this.hasBuff("bm_discount") || this.bmDiscountRun > 0),
       stock: this.bmStock,
+      refreshCost: this.bmRefreshCost(),
       repairCost: blackMarketRepairCost(this.maxDurability),
       repairPct: 40,
       favor: this.save.favor,

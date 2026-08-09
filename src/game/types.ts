@@ -166,6 +166,7 @@ export type BlackMarketView = {
   sellRatio: number;
   buyDiscount: number;
   stock: BmStockItem[];
+  refreshCost: number;  // 付费刷新货架的花费
   repairCost: number;
   repairPct: number;
   favor: number;

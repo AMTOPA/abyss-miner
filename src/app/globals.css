@@ -572,7 +572,7 @@ ul, ol { list-style: none; }
 /* --- 仓库 --- */
 .wh-list { display: flex; flex-direction: column; gap: 8px; }
 .wh-row {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
   padding: 10px 13px;
   background: var(--panel-2);
   border: 1px solid var(--panel-border);
@@ -580,17 +580,10 @@ ul, ol { list-style: none; }
   transition: border-color 0.15s ease;
 }
 .wh-row:hover { border-color: rgba(240, 162, 60, 0.4); }
-.wh-ore { flex: 1; font-size: 13.5px; font-weight: 700; min-width: 0; }
+.wh-ore { flex: 1 1 150px; min-width: 130px; font-size: 13.5px; font-weight: 700; }
+.wh-value { flex: 1 1 140px; min-width: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
 .wh-qty { font-size: 12px; font-family: var(--font-mono); color: var(--text-dim); }
-.wh-sell {
-  padding: 5px 12px; border-radius: 9px;
-  background: rgba(240, 162, 60, 0.12);
-  border: 1px solid rgba(240, 162, 60, 0.35);
-  color: var(--gold); font-size: 12.5px; font-weight: 700;
-  transition: background 0.15s ease, transform 0.15s ease;
-}
-.wh-sell:hover:not(:disabled) { background: rgba(240, 162, 60, 0.25); transform: translateY(-1px); }
-.wh-sell:disabled { opacity: 0.4; cursor: not-allowed; }
+.wh-sell { display: flex; align-items: center; gap: 6px; }
 .wh-total {
   margin-top: 10px; text-align: right;
   font-size: 14px; font-weight: 800; font-family: var(--font-mono); color: var(--gold);
@@ -803,9 +796,9 @@ ul, ol { list-style: none; }
 .bag-total { width: 100%; text-align: center; font-size: 12px; color: var(--text-dim); margin-top: 4px; }
 
 .bag-discard {
-  width: 18px; height: 18px; border-radius: 50%;
+  width: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 10px; line-height: 1;
+  font-size: 10px; line-height: 1; white-space: nowrap;
   color: rgba(240, 218, 178, 0.85);
   background: rgba(52, 38, 24, 0.95);
   border: 1px solid rgba(230, 180, 110, 0.28);
@@ -911,8 +904,8 @@ ul, ol { list-style: none; }
 /* --- 评级 / 难度 / 损耗 / 品质 徽章 --- */
 .rating-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 46px; height: 46px; border-radius: 50%;
-  font-size: 24px; font-weight: 900; font-family: var(--font-mono);
+  min-width: 46px; height: 46px; padding: 0 14px; border-radius: 999px;
+  font-size: 15px; font-weight: 900; font-family: var(--font-mono);
   border: 2px solid;
   background: rgba(14, 10, 6, 0.6);
   vertical-align: middle;
@@ -1015,12 +1008,12 @@ ul, ol { list-style: none; }
   margin-bottom: 10px;
 }
 .bm-sell-row {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
   padding: 8px 0;
   border-bottom: 1px solid rgba(230, 180, 110, 0.09);
 }
 .bm-sell-row:last-child { border-bottom: none; }
-.bm-sell-row .wh-ore { flex: 1; min-width: 0; }
+.bm-sell-row .wh-ore { flex: 1 1 140px; min-width: 120px; }
 .bm-sell-row .wh-qty { margin-right: 6px; }
 .bm-stock {
   display: grid;
@@ -1038,7 +1031,8 @@ ul, ol { list-style: none; }
 .bm-item:hover { border-color: rgba(240, 162, 60, 0.4); }
 .bm-item .bm-item-name { font-size: 13px; font-weight: 800; }
 .bm-item-ore { font-size: 11.5px; color: var(--text-dim); }
-.bm-item-cash { font-size: 12.5px; font-family: var(--font-mono); color: var(--gold); font-weight: 700; }
+.bm-item-pay { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.bm-item-cash { font-size: 12.5px; font-family: var(--font-mono); color: var(--gold); font-weight: 700; white-space: nowrap; }
 .bm-item .btn { align-self: flex-start; margin-top: 2px; }
 .bm-repair {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -2516,6 +2510,10 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
 .node-preview-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .node-preview-card,
 .risk-range-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
   padding: 8px;
   border: 1px solid rgba(154, 165, 177, 0.18);
   border-radius: 9px;
@@ -2766,3 +2764,39 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
   .archetype-grid,
   .challenge-list { grid-template-columns: 1fr; }
 }
+
+/* --- 锻造工坊 --- */
+.forge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.forge-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 7px;
+  padding: 12px 13px;
+  background: rgba(18, 13, 8, 0.7);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  transition: border-color 0.15s ease;
+}
+.forge-card:hover { border-color: rgba(240, 162, 60, 0.4); }
+.forge-card.locked { opacity: 0.75; }
+.forge-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; }
+.forge-icon { font-size: 20px; line-height: 1; }
+.forge-name { font-size: 14px; font-weight: 800; }
+.forge-result { font-size: 11px; color: var(--amber); margin-left: auto; white-space: nowrap; }
+.forge-desc { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; margin: 0; }
+.forge-costs { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.forge-cost { font-size: 11.5px; font-family: var(--font-mono); color: var(--gold); white-space: nowrap; }
+.forge-cost.poor { color: var(--red); }
+.forge-have { font-style: normal; color: var(--text-dim); }
+.forge-have.poor { color: var(--red); }
+.forge-notice {
+  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+  z-index: 60; max-width: 88vw; padding: 10px 18px; border-radius: 12px;
+  background: rgba(20, 14, 9, 0.96); border: 1px solid var(--amber);
+  color: var(--amber); font-size: 13px; font-weight: 700; text-align: center;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+@media (max-width: 420px) {
+  .forge-result { margin-left: 0; }
+}
+
+.bm-section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.bm-section-title-row .btn { font-size: 11.5px; }
