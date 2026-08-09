@@ -645,7 +645,7 @@ export class MinerGame {
     const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
     this.bmStock = generateBmStock(this.depth, favor, {
       sellBoost: this.hasBuff("sell_boost"),
-      discount: this.hasBuff("bm_discount"),
+      discount: this.hasBuff("bm_discount") || this.bmDiscountRun > 0,
     });
     this.phase = "blackmarket";
     this.audio.play("click");
@@ -1698,7 +1698,7 @@ export class MinerGame {
     }));
     return {
       sellRatio: blackSellRatio(favor, this.hasBuff("sell_boost")),
-      buyDiscount: blackBuyDiscount(favor, this.hasBuff("bm_discount")),
+      buyDiscount: blackBuyDiscount(favor, this.hasBuff("bm_discount") || this.bmDiscountRun > 0),
       stock: this.bmStock,
       repairCost: blackMarketRepairCost(this.maxDurability),
       repairPct: 40,
