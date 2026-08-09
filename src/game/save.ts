@@ -4,6 +4,10 @@ import {
   SAVE_BACKUP_KEY, SAVE_KEY, defaultSave,
   ORES, baseOreValue,
 } from "./config";
+
+// 本地存档最后修改时间戳（用于云存档跨设备合并比较）
+export const SAVE_UPDATED_KEY = "abyss_miner_save_updated_at_v4";
+export const MUTED_KEY = "abyss_miner_muted";
 import type { OreId, SaveData, UpgradeId } from "./config";
 import type { ArchetypeId } from "./types";
 import {
@@ -171,7 +175,28 @@ export function persistSave(save: SaveData): void {
     const json = JSON.stringify(save);
     window.localStorage.setItem(SAVE_KEY, json);
     window.localStorage.setItem(SAVE_BACKUP_KEY, json);
+    window.localStorage.setItem(SAVE_UPDATED_KEY, String(Date.now()));
   } catch {
     /* ignore quota errors */
   }
+}
+
+// 覆盖本地存档（云同步拉取后使用），并刷新修改时间戳
+export function replaceSave(save: SaveData): void {
+  if (typeof window === "undefined") return;
+  try {
+    const json = JSON.stringify(save);
+    window.localStorage.setItem(SAVE_KEY, json);
+    window.localStorage.setItem(SAVE_BACKUP_KEY, json);
+    window.localStorage.setItem(SAVE_UPDATED_KEY, String(Date.now()));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+// 读取本地存档最后修改时间（毫秒时间戳；无记录返回 0）
+export function getLocalSaveUpdatedAt(): number {
+  if (typeof window === "undefined") return 0;
+  const v = Number(window.localStorage.getItem(SAVE_UPDATED_KEY));
+  return Number.isFinite(v) && v > 0 ? v : 0;
 }

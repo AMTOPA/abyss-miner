@@ -202,7 +202,7 @@ export function defaultSave(): SaveData {
 
 // ---------- 存档加载 / 迁移 / 持久化（实现见 save.ts，避免与 items.ts 循环依赖） ----------
 
-export { loadSave, persistSave, normalizeSave } from "./save";
+export { loadSave, persistSave, normalizeSave, replaceSave, getLocalSaveUpdatedAt, MUTED_KEY } from "./save";
 
 // ---------- 格式化 ----------
 

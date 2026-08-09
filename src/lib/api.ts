@@ -57,6 +57,20 @@ export async function apiLeaderboard(limit = 50, kind: ScoreKind = "value"): Pro
   return readJson(res);
 }
 
+export async function apiFetchSave(): Promise<{ save: unknown | null; updatedAt: number | null }> {
+  const res = await fetch(api("/api/save"));
+  return readJson(res);
+}
+
+export async function apiUploadSave(save: unknown, clientUpdatedAt: number): Promise<{ ok: true; updatedAt: number }> {
+  const res = await fetch(api("/api/save"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ save, clientUpdatedAt }),
+  });
+  return readJson(res);
+}
+
 export async function apiSubmitScore(
   runId: string,
   runValue: number,

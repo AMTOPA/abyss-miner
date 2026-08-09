@@ -47,6 +47,11 @@ export function getDb(): DatabaseSync {
       kind TEXT NOT NULL DEFAULT 'value',
       net INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS user_saves (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      save_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_scores_user ON scores(user_id);
     CREATE INDEX IF NOT EXISTS idx_scores_value ON scores(run_value DESC);
   `);
@@ -113,6 +118,25 @@ export function deleteExpiredSessions(): void {
 
 export function updateUserPasswordHash(userId: number, passwordHash: string): void {
   getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
+}
+
+// ---------------- 云存档 ----------------
+
+export type UserSaveRow = { user_id: number; save_json: string; updated_at: number };
+
+export function getUserSave(userId: number): UserSaveRow | undefined {
+  return getDb().prepare("SELECT user_id, save_json, updated_at FROM user_saves WHERE user_id = ?").get(userId) as
+    | UserSaveRow
+    | undefined;
+}
+
+export function upsertUserSave(userId: number, saveJson: string, updatedAt: number): void {
+  getDb()
+    .prepare(
+      `INSERT INTO user_saves (user_id, save_json, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET save_json = excluded.save_json, updated_at = excluded.updated_at`
+    )
+    .run(userId, saveJson, updatedAt);
 }
 
 // 幂等提交：同一用户的同一 run_id 只能写入一次。

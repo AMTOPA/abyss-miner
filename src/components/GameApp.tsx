@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { SaveData, loadSave, persistSave } from "@/game/config";
+import { SaveData, loadSave, persistSave, replaceSave, getLocalSaveUpdatedAt, normalizeSave, MUTED_KEY } from "@/game/config";
 import { RunConfig, RunResult } from "@/game/types";
 import { AudioEngine } from "@/game/audio";
 import LobbyScreen from "./LobbyScreen";
@@ -9,7 +9,7 @@ import RunScreen from "./RunScreen";
 import UpgradeScreen from "./UpgradeScreen";
 import LeaderboardScreen from "./LeaderboardScreen";
 import AuthModal from "./AuthModal";
-import { apiLogout, apiMe, apiSubmitScore, AuthUser } from "@/lib/api";
+import { apiLogout, apiMe, apiSubmitScore, apiFetchSave, apiUploadSave, AuthUser } from "@/lib/api";
 
 type ScoreSubmit = { runId: string; value: number; depth: number };
 
@@ -23,7 +23,7 @@ export default function GameApp() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [muted, setMuted] = useState<boolean>(() => loadSave().settings.muted);
+  const [muted, setMuted] = useState<boolean>(false);
   const [pendingScore, setPendingScore] = useState<ScoreSubmit | null>(null);
   const [runId, setRunId] = useState<string>("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "done" | "needLogin" | "error">("idle");
@@ -32,17 +32,34 @@ export default function GameApp() {
   const audioRef = useRef<AudioEngine | null>(null);
   if (!audioRef.current) audioRef.current = new AudioEngine();
 
-  // 避免 SSR 下读取 localStorage
-  const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
+  // 云存档同步：保存最新存档引用 + 上次已上传快照 + 并发锁
+  const saveRef = useRef<SaveData>(save);
+  const lastUploadedKeyRef = useRef<string | null>(null);
+  const syncingRef = useRef(false);
+  const cloudSyncedRef = useRef(false); // 云端拉取/合并完成前禁止上传，避免空存档覆盖云端
 
   useEffect(() => {
-    const a = audioRef.current!;
-    a.setMuted(muted);
-    const s = loadSave();
-    s.settings.muted = muted;
-    persistSave(s);
-    setSave(s);
+    saveRef.current = save;
+  }, [save]);
+
+  // 避免 SSR 下读取 localStorage
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    setReady(true);
+    try {
+      setMuted(window.localStorage.getItem(MUTED_KEY) === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    audioRef.current?.setMuted(muted);
+    try {
+      window.localStorage.setItem(MUTED_KEY, muted ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
   }, [muted]);
 
   useEffect(() => {
@@ -58,6 +75,55 @@ export default function GameApp() {
   }, [toast]);
 
   const showToast = useCallback((msg: string) => setToast(msg), []);
+  // 登录后拉取云端存档：云端比本地新则覆盖本地；否则保留本地（稍后自动上传）
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    apiFetchSave()
+      .then(({ save: cloud, updatedAt }) => {
+        if (cancelled) return;
+        if (cloud) {
+          const localAt = getLocalSaveUpdatedAt();
+          if ((updatedAt ?? 0) > localAt) {
+            const merged = normalizeSave(cloud);
+            replaceSave(merged);
+            setSave(merged);
+            showToast("已同步云端存档");
+          }
+        }
+        // 拉取/合并完成，允许后续自动备份（避免在拉取完成前用空存档覆盖云端）
+        cloudSyncedRef.current = true;
+      })
+      .catch(() => {
+        // 拉取失败：保持禁止上传，避免覆盖云端
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, showToast]);
+
+  // 每 5 秒自动备份：已登录且存档有变化时上传到云端
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setInterval(async () => {
+      if (syncingRef.current || !cloudSyncedRef.current) return;
+      try {
+        const s = saveRef.current;
+        const key = JSON.stringify(s);
+        if (key === lastUploadedKeyRef.current) return;
+        syncingRef.current = true;
+        await apiUploadSave(s, Date.now());
+        lastUploadedKeyRef.current = key;
+      } catch {
+        // 网络/服务器异常：留待下个周期重试
+      } finally {
+        syncingRef.current = false;
+      }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [user]);
+
+
 
   const startRun = useCallback((depth: number, config: RunConfig) => {
     setRunStartDepth(depth);
@@ -102,6 +168,7 @@ export default function GameApp() {
       setUser(u);
       setAuthOpen(false);
       showToast(`欢迎，${u.username}！`);
+      // 登录成功不立即上传：先等云端拉取合并（云端更新则覆盖本地），合并完成后再由定时备份上传
       // 登录成功后提交待处理成绩
       if (pendingScore) {
         setSubmitState("submitting");
@@ -121,6 +188,8 @@ export default function GameApp() {
 
   const handleLogout = useCallback(async () => {
     try {
+      // 退出前把当前存档上传一次，确保云端是最新状态
+      await apiUploadSave(saveRef.current, Date.now()).catch(() => {});
       await apiLogout();
     } catch {
       /* ignore */
