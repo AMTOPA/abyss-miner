@@ -1,5 +1,9 @@
 # ⛏️ 深渊矿工（Abyss Miner）
 
+> 🎮 **在线体验：https://amtopa.com/abyss-miner**
+> 源码同步于 GitHub：https://github.com/AMTOPA/abyss-miner
+
+
 > 一款温暖又致命的地底钻探搜打撤游戏：在大厅整备补给，携带现金与装备深入地下，在灾难降临前带着矿石撤离、入库、变现，向更深层进发。
 
 ## ✨ 功能特性
