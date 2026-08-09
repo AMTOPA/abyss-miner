@@ -1,5 +1,6 @@
 // ---------- 游戏核心类型与配置 ----------
 import type { Difficulty, EquipmentInstance, ShopStock } from "./items";
+import type { ArchetypeId } from "./types";
 
 export type OreId = "stone" | "copper" | "iron" | "silver" | "gold" | "diamond" | "crystal" | "unknown";
 
@@ -148,6 +149,16 @@ export type SaveData = {
   shop: { date: string; stock: ShopStock[] };  // 每日刷新商店
   favor: number;                               // 黑市好感 0..5（跨局）
   difficultyUnlocked: Difficulty[];
+  // v4：流派解锁与图鉴
+  archetypesUnlocked: ArchetypeId[];
+  codex: {
+    minerals: Record<string, number>;   // key `${oreId}:${quality}` -> 已收集数量
+    rooms: string[];
+    creatures: number;
+    anomalies: string[];
+    modules: string[];
+    research: Record<string, number>;   // 图鉴研究等级：key -> level
+  };
   daily: DailyProgress;                        // 每日任务进度（好感度来源）
   stats: {
     runs: number;
@@ -158,16 +169,19 @@ export type SaveData = {
     totalMined: number;
     totalSells: number;
     creaturesScared: number;
+    bmTrades: number;        // 黑市累计交易次数（拾荒商人解锁）
+    anomaliesSeen: number;   // 深渊异常遭遇次数（深渊生存者解锁）
+    overloadDrills: number;  // 超载钻进累计次数（超载钻工解锁）
   };
   settings: { muted: boolean; reduceMotion: boolean };
 };
 
-export const SAVE_KEY = "abyss_miner_save_v3";
-export const SAVE_BACKUP_KEY = "abyss_miner_save_backup_v3";
+export const SAVE_KEY = "abyss_miner_save_v4";
+export const SAVE_BACKUP_KEY = "abyss_miner_save_backup_v4";
 
 export function defaultSave(): SaveData {
   return {
-    version: 3,
+    version: 4,
     cash: 0,
     upgrades: { drill: 0, safety: 0, backpack: 0, detection: 0, support: 0 },
     unlockedCheckpoints: [0],
@@ -178,8 +192,10 @@ export function defaultSave(): SaveData {
     shop: { date: "", stock: [] },
     favor: 0,
     difficultyUnlocked: ["mild", "normal"],
+    archetypesUnlocked: [],
+    codex: { minerals: {}, rooms: [], creatures: 0, anomalies: [], modules: [], research: {} },
     daily: { date: "", tasks: {}, claimed: {} },
-    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0 },
+    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0, bmTrades: 0, anomaliesSeen: 0, overloadDrills: 0 },
     settings: { muted: false, reduceMotion: false },
   };
 }

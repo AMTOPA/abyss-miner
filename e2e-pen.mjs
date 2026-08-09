@@ -59,13 +59,27 @@ async function waitFor(fn, timeoutMs, intervalMs = 150) {
 }
 
 // 等待进入观察界面（.observe-layout 出现或 .signal >= 3；顺带处理深渊异常弹窗）
+// 自动处理 v4 事件面板（路线/模块/房间/营地），返回 true 表示已处理
+async function autoResolveEventPanels() {
+  if ((await page.locator(".anomaly-panel").count()) > 0) {
+    const btn = page.getByRole("button", { name: /踏入这一层/ });
+    if ((await btn.count()) > 0) await btn.first().click();
+    return true;
+  }
+  const routeCard = page.locator(".route-card").first();
+  if (await routeCard.count()) { await routeCard.click(); return true; }
+  const moduleCard = page.locator(".module-card").first();
+  if (await moduleCard.count()) { await moduleCard.click(); return true; }
+  const roomOpt = page.locator(".room-option").first();
+  if (await roomOpt.count()) { await roomOpt.click(); return true; }
+  const baseLeave = page.locator(".base-option", { hasText: /继续深入/ }).first();
+  if (await baseLeave.count()) { await baseLeave.click(); return true; }
+  return false;
+}
+
 async function waitObserve(timeoutMs) {
   return waitFor(async () => {
-    if ((await page.locator(".anomaly-panel").count()) > 0) {
-      const btn = page.getByRole("button", { name: /踏入这一层/ });
-      if ((await btn.count()) > 0) await btn.first().click();
-      return false;
-    }
+    if (await autoResolveEventPanels()) return false;
     return (await page.locator(".observe-layout").count()) > 0 || (await page.locator(".signal").count()) >= 3;
   }, timeoutMs);
 }
@@ -155,11 +169,13 @@ async function backToHome(maxTries = 8) {
     ) {
       const menu = page.getByRole("button", { name: /返回主菜单/ });
       if ((await menu.count()) > 0) {
-        await menu.first().click();
+        await menu.first().click({ force: true, timeout: 6000 });
         await sleep(400);
         continue;
       }
     }
+    // v4 事件面板：自动选第一个选项继续
+    if (await autoResolveEventPanels()) { await sleep(300); continue; }
     // 观察 / 结算界面：点「返回地面」
     const inRun =
       (await page.locator(".observe-layout").count()) > 0 ||
@@ -195,6 +211,9 @@ async function startRun0() {
   if ((await page.locator(".lobby-tabs").count()) === 0) {
     if (!(await backToHome(5))) return false;
   }
+  // 新大厅默认折叠高级配置，先展开才能看到「出发！」
+  const adv = page.getByRole("button", { name: /高级配置/ }).first();
+  if ((await adv.count()) > 0) { await adv.click(); await sleep(300); }
   const go = page.getByRole("button", { name: /出发！/ });
   if ((await go.count()) === 0) return false;
   await go.click();
@@ -214,13 +233,18 @@ async function restartFromHome() {
 await page.goto(BASE, { waitUntil: "networkidle" });
 await page.evaluate(() => {
   const save = {
-    cash: 5000,
+    version: 4, cash: 5000,
     upgrades: { drill: 5, safety: 3, backpack: 2, detection: 3, support: 2 },
     unlockedCheckpoints: [0, 100, 300, 600, 1000],
-    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0 },
-    settings: { muted: true },
+    warehouseStacks: [], warehouseItems: {}, warehouseEquipment: [], equipped: {},
+    shop: { date: "", stock: [] }, favor: 0, difficultyUnlocked: ["mild", "normal"],
+    archetypesUnlocked: [],
+    codex: { minerals: {}, rooms: [], creatures: 0, anomalies: [], modules: [], research: {} },
+    daily: { date: "", tasks: {}, claimed: {} },
+    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0, bmTrades: 0, anomaliesSeen: 0, overloadDrills: 0 },
+    settings: { muted: true, reduceMotion: false },
   };
-  localStorage.setItem("abyss_miner_save_v3", JSON.stringify(save));
+  localStorage.setItem("abyss_miner_save_v4", JSON.stringify(save));
 });
 await page.reload({ waitUntil: "networkidle" });
 await page.waitForTimeout(600);
@@ -228,6 +252,8 @@ const cashText = await page.locator(".lobby-cash").first().textContent();
 ok("save injected cash 5000", (cashText || "").includes("5,000") || (cashText || "").includes("5000"), cashText);
 
 // ---------- 2. 从 0m 出发，进入观察界面 ----------
+await page.getByRole("button", { name: /高级配置/ }).first().click();
+await sleep(300);
 ok("start button present", (await page.getByRole("button", { name: /出发！/ }).count()) === 1);
 const go = page.getByRole("button", { name: /出发！/ });
 ok("go button present", (await go.count()) === 1);

@@ -34,8 +34,8 @@ page.on("dialog", (d) => d.accept());
 await page.goto(BASE, { waitUntil: "domcontentloaded" });
 await page.evaluate(() => {
   const save = {
-    version: 3, cash: 8000,
-    upgrades: { drill: 5, safety: 4, backpack: 3, detection: 3, support: 2 },
+    version: 4, cash: 8000,
+    upgrades: { drill: 6, safety: 6, backpack: 4, detection: 5, support: 9 },
     unlockedCheckpoints: [0, 100, 300],
     warehouseStacks: [
       { key: "copper:normal", count: 20, unitValue: 20 },
@@ -44,18 +44,23 @@ await page.evaluate(() => {
     warehouseItems: { repair_kit: 3 },
     warehouseEquipment: [], equipped: {}, shop: { date: "", stock: [] },
     favor: 1, difficultyUnlocked: ["mild", "normal", "hardcore"],
+    archetypesUnlocked: [],
+    codex: { minerals: {}, rooms: [], creatures: 0, anomalies: [], modules: [], research: {} },
     daily: { date: "", tasks: {}, claimed: {} },
-    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 500, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0 },
-    settings: { muted: true },
+    stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 500, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0, bmTrades: 0, anomaliesSeen: 0, overloadDrills: 0 },
+    settings: { muted: true, reduceMotion: false },
   };
-  localStorage.setItem("abyss_miner_save_v3", JSON.stringify(save));
+  localStorage.setItem("abyss_miner_save_v4", JSON.stringify(save));
 });
 await page.reload({ waitUntil: "networkidle" });
 
 // ---------- 1. 大厅 ----------
 await page.waitForSelector(".lobby-tab", { timeout: 8000 });
-ok("lobby tabs", (await page.locator(".lobby-tab").count()) === 6);
+ok("lobby tabs", (await page.locator(".lobby-tab").count()) === 7);
 ok("cash shown", /8,?000/.test(await page.locator(".lobby-cash").innerText()));
+// 展开高级配置后，检查点/难度/增益/携带道具才可见
+await page.getByRole("button", { name: /高级配置/ }).first().click();
+await page.waitForTimeout(400);
 ok("checkpoints x5", (await page.locator(".checkpoint-item").count()) === 5);
 ok("difficulty x3", (await page.locator(".diff-card").count()) === 3);
 ok("buff cards", (await page.locator(".buff-card").count()) === 10);
@@ -126,8 +131,19 @@ for (let step = 0; step < 80; step++) {
   }
   const cont = page.getByRole("button", { name: /继续深入/ });
   if (await cont.count()) { await cont.click(); await page.waitForTimeout(1500); continue; }
+  // v4 事件面板：路线分岔 / 局内模块 / 特殊房间（都选第一个选项继续）
+  const routeCard = page.locator(".route-card").first();
+  if (await routeCard.count()) { await routeCard.click(); await page.waitForTimeout(400); continue; }
+  const moduleCard = page.locator(".module-card").first();
+  if (await moduleCard.count()) { await moduleCard.click(); await page.waitForTimeout(400); continue; }
+  const roomOpt = page.locator(".room-option").first();
+  if (await roomOpt.count()) { await roomOpt.click(); await page.waitForTimeout(400); continue; }
   const drillBtn = page.getByRole("button", { name: /标准钻进/ });
   if (await drillBtn.count()) {
+    const sup = page.getByRole("button", { name: /支撑架/ }).first();
+    if (await sup.count()) {
+      if (!(await sup.isDisabled().catch(() => true))) { await sup.click(); await page.waitForTimeout(150); }
+    }
     await drillBtn.click(); await page.waitForTimeout(200);
     const skip = page.locator(".skip-btn");
     if (await skip.count()) { await skip.click(); await page.waitForTimeout(300); }
@@ -146,18 +162,28 @@ for (let step = 0; step < 80; step++) {
 ok("black market reached", bmOpened);
 
 // ---------- 4. 返回地面（评级） ----------
-const retreat = page.getByRole("button", { name: /返回地面/ }).first();
-if (await retreat.count()) { await retreat.click(); await page.waitForTimeout(700); }
-if (!(await page.locator(".end-panel.success").count())) {
-  const r2 = page.getByRole("button", { name: /返回地面/ });
-  if (await r2.count()) { await r2.first().click(); await page.waitForTimeout(700); }
+for (let tries = 0; tries < 14 && !(await page.locator(".end-panel").count()); tries++) {
+  const retreatBtn = page.getByRole("button", { name: /返回地面/ }).first();
+  if (await retreatBtn.count() && !(await retreatBtn.isDisabled().catch(() => true))) {
+    await retreatBtn.click(); await page.waitForTimeout(700);
+  } else {
+    await page.waitForTimeout(500);
+  }
 }
 ok("surfaced", (await page.locator(".end-panel.success").count()) === 1);
 const endText = await page.locator(".end-panel").innerText().catch(() => "");
 ok("rating present", /S|A|B|C/.test(endText), endText.slice(0, 120));
 
 // ---------- 5. 返回大厅：仓库应有矿石，可出售 ----------
-await page.getByRole("button", { name: /返回主菜单/ }).click();
+const diag = await page.evaluate(() => ({
+  endPanels: document.querySelectorAll(".end-panel").length,
+  endSuccess: document.querySelectorAll(".end-panel.success").length,
+  btns: Array.from(document.querySelectorAll("button")).filter((b) => b.offsetParent !== null).map((b) => (b.textContent || "").trim().slice(0, 24)).slice(0, 30),
+}));
+console.log("DIAG BEFORE MENU:", JSON.stringify(diag));
+const menuBtn2 = page.getByRole("button", { name: /返回主菜单/ }).first();
+await menuBtn2.click({ force: true, timeout: 8000 });
+
 await page.waitForTimeout(600);
 await page.getByRole("button", { name: /仓库/ }).click();
 await page.waitForTimeout(400);
@@ -204,20 +230,48 @@ ok("logged in chip", chipOk);
 // 下矿一次并撤离，验证自动上榜
 await page.getByRole("button", { name: /出矿/ }).click();
 await page.waitForTimeout(200);
-await page.getByRole("button", { name: /出发！/ }).click();
+// 第二次出发：新大厅默认折叠高级配置，直接用快速出发
+const quickGo = page.getByRole("button", { name: /快速出发/ });
+if (await quickGo.count()) await quickGo.first().click();
+else await page.getByRole("button", { name: /出发！/ }).click();
 await page.waitForTimeout(2800);
-for (let i = 0; i < 2; i++) {
+for (let i = 0; i < 8; i++) {
   const drillBtn = page.getByRole("button", { name: /标准钻进/ });
   if (await drillBtn.count()) { await drillBtn.click(); await page.waitForTimeout(200); const skip = page.locator(".skip-btn"); if (await skip.count()) { await skip.click(); await page.waitForTimeout(300); } await page.waitForTimeout(400); }
   const cont = page.getByRole("button", { name: /继续深入/ });
-  if (await cont.count()) { await cont.click(); await page.waitForTimeout(1400); }
-  else await page.waitForTimeout(800);
+  if (await cont.count()) { await cont.click(); await page.waitForTimeout(1400); continue; }
+  const routeCard = page.locator(".route-card").first();
+  if (await routeCard.count()) { await routeCard.click(); await page.waitForTimeout(400); continue; }
+  const moduleCard = page.locator(".module-card").first();
+  if (await moduleCard.count()) { await moduleCard.click(); await page.waitForTimeout(400); continue; }
+  const roomOpt = page.locator(".room-option").first();
+  if (await roomOpt.count()) { await roomOpt.click(); await page.waitForTimeout(400); continue; }
+  await page.waitForTimeout(800);
 }
-const retreat2 = page.getByRole("button", { name: /返回地面/ }).first();
-if (await retreat2.count()) { await retreat2.click(); await page.waitForTimeout(700); }
+for (let tries = 0; tries < 14; tries++) {
+  const retreat2 = page.getByRole("button", { name: /返回地面/ }).first();
+  if ((await retreat2.count()) && !(await retreat2.isDisabled().catch(() => true))) {
+    await retreat2.click();
+    await page.waitForTimeout(700);
+    break;
+  }
+  await page.waitForTimeout(500);
+}
 const doneNote = await page.locator(".submit-note.ok").count().catch(() => 0);
 ok("score submitted", doneNote === 1);
-await page.getByRole("button", { name: /返回主菜单/ }).click();
+const menuBtn = page.getByRole("button", { name: /返回主菜单/ }).first();
+try {
+  await menuBtn.click({ force: true, timeout: 8000 });
+} catch (e) {
+  const d2 = await page.evaluate(() => ({
+    end: document.querySelectorAll(".end-panel").length,
+    endSuccess: document.querySelectorAll(".end-panel.success").length,
+    title: (document.querySelector(".panel-title, .end-title") || {}).textContent || "",
+    btns: Array.from(document.querySelectorAll("button")).filter((b) => b.offsetParent !== null).map((b) => (b.textContent || "").trim().slice(0, 24)).slice(0, 40),
+  }));
+  console.log("DIAG2:", JSON.stringify(d2));
+  throw e;
+}
 await page.waitForTimeout(600);
 await page.getByRole("button", { name: /排行榜/ }).click();
 await page.waitForTimeout(300);

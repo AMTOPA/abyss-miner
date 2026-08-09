@@ -5,6 +5,7 @@ import {
   ORES, baseOreValue,
 } from "./config";
 import type { OreId, SaveData, UpgradeId } from "./config";
+import type { ArchetypeId } from "./types";
 import {
   EQUIPMENT_DEFS, scaleStats,
 } from "./items";
@@ -100,8 +101,12 @@ export function normalizeSave(raw: unknown): SaveData {
       }
     }
   }
+  const archetypesUnlocked = Array.isArray(r.archetypesUnlocked)
+    ? (r.archetypesUnlocked as unknown[]).filter((a) => ["hunter", "overdriver", "scavenger", "survivor"].includes(a as string)) as ArchetypeId[]
+    : base.archetypesUnlocked;
+  const codexRaw = (r.codex && typeof r.codex === "object" ? r.codex : {}) as Record<string, unknown>;
   return {
-    version: 3,
+    version: 4,
     cash: clampNum(r.cash, 0, 1e12, 0),
     upgrades,
     unlockedCheckpoints: Array.isArray(r.unlockedCheckpoints)
@@ -116,6 +121,15 @@ export function normalizeSave(raw: unknown): SaveData {
     difficultyUnlocked: Array.isArray(r.difficultyUnlocked)
       ? (r.difficultyUnlocked as unknown[]).filter((d) => ["mild", "normal", "hardcore"].includes(d as string)) as Difficulty[]
       : base.difficultyUnlocked,
+    archetypesUnlocked,
+    codex: {
+      minerals: sanitizeRecord(codexRaw.minerals),
+      rooms: Array.isArray(codexRaw.rooms) ? (codexRaw.rooms as unknown[]).filter((x) => typeof x === "string") as string[] : [],
+      creatures: clampNum(codexRaw.creatures, 0, 1e9, 0),
+      anomalies: Array.isArray(codexRaw.anomalies) ? (codexRaw.anomalies as unknown[]).filter((x) => typeof x === "string") as string[] : [],
+      modules: Array.isArray(codexRaw.modules) ? (codexRaw.modules as unknown[]).filter((x) => typeof x === "string") as string[] : [],
+      research: sanitizeRecord(codexRaw.research),
+    },
     daily: (r.daily && typeof r.daily === "object" ? r.daily : { date: "", tasks: {}, claimed: {} }) as SaveData["daily"],
     stats,
     settings: { muted: !!((r.settings ?? {}) as Record<string, unknown>).muted, reduceMotion: !!((r.settings ?? {}) as Record<string, unknown>).reduceMotion },

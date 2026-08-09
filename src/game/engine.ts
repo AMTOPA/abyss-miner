@@ -4,8 +4,10 @@ import {
 } from "./config";
 import type { OreId, OreStack, SaveData } from "./config";
 import {
-  Layer, VEIN_NAME, generateLayer, hazardName, overloadOrePool, rollOreYield, upgradeQuality,
+  Layer, VEIN_NAME, collapseRiskLabel as wcRiskLabel, generateLayer, hazardName, overloadOrePool, rollOreYield, upgradeQuality,
 } from "./world";
+import { ARCHETYPES, CHALLENGE_DEFS, ROOMS, ROOM_ORDER, MODULE_POOL, pickModules } from "./content";
+import type { TraitId } from "./content";
 import {
   CONSUMABLES, DIFFICULTY_DEFS, EMPTY_EQUIP_STATS, EQUIPMENT_DEFS,
   ORE_QUALITIES, blackBuyDiscount, blackMarketRepairCost, blackSellRatio,
@@ -16,8 +18,9 @@ import type {
   BmStockItem, BuffId, Difficulty, EquipmentInstance, EquipmentStats, OreQuality,
 } from "./items";
 import type {
-  BagSlot, BlackMarketView, DailyTaskView, EngineCallbacks, LogEntry,
-  RunConfig, RunPhase, RunResult, UiSnapshot,
+  ArchetypeId, BagSlot, BlackMarketView, BossView, ChallengeId, DailyTaskView,
+  EngineCallbacks, EvacInfo, ForwardBaseView, LogEntry, ModuleChoice, ModuleId, RevealLevel,
+  RiskRange, RoomId, RoomView, RouteChoice, RunConfig, RunPhase, RunResult, UiSnapshot,
 } from "./types";
 import { AudioEngine } from "./audio";
 
@@ -50,6 +53,16 @@ export function mulberry32(seed: number) {
   };
 }
 
+// 字符串种子 -> 数字（FNV-1a），用于本局可复现随机
+export function hashSeed(seed: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 type Particle = {
   x: number; y: number; vx: number; vy: number;
   life: number; maxLife: number; size: number; color: string;
@@ -67,7 +80,7 @@ export class MinerGame {
   private audio: AudioEngine;
   private cb: EngineCallbacks;
   private save: SaveData;
-  private config: RunConfig = { difficulty: "normal", pocket: 0, buffs: [], equipment: [], items: [] };
+  private config: RunConfig = { difficulty: "normal", pocket: 0, buffs: [], equipment: [], items: [], archetype: null, seed: "", challenge: [] };
   private equipStats: EquipmentStats = { ...EMPTY_EQUIP_STATS };
   private raf = 0;
   private lastTime = 0;
@@ -118,6 +131,59 @@ export class MinerGame {
   private resultOres: BagSlot[] = [];
   // 局内购入的装备：只有成功撤离才写入仓库
   private runPendingEquipment: EquipmentInstance[] = [];
+  // ================= v4 状态 =================
+  private archetype: ArchetypeId | null = null;
+  private challenge: ChallengeId[] = [];
+  private modules: ModuleId[] = [];
+  private traits: TraitId[] = [];
+  private seed = "";
+  private rnd: () => number = Math.random;   // 本局随机源（种子可复现）
+  private revealLevel: RevealLevel = "none";
+  private cautiousCooldown = 0;              // 稳妥模式冷却剩余层数
+  private standardStopped = false;           // 本层标准模式是否已收手
+  private drillHeat = 0;                     // 超载钻进热量
+  private creatureImmune = 0;                // 接下来 N 层无生物（巢穴诱饵）
+  private heatGainMult = 1;                  // 热量增长倍率
+  private riskReduce = 0;                    // 全局风险削减（加固井壁等，0..0.5）
+  private qualityBoostRun = 0;               // 本局高品质概率额外加成 %
+  private stackCap = 99;                     // 矿石堆叠上限（压缩货舱 999）
+  private overloadGainBonus = 0;             // 超载收益额外 %
+  private overloadRiskMult = 1;              // 超载风险倍率
+  private pierceCapBonus = 0;                // 穿透上限额外层数
+  private baitAvoid = 0;                     // 生物自动驱散概率 %
+  private autoCompress = false;              // 满格自动压缩最低价值矿堆
+  private revealQualityAuto = false;         // 每层自动揭示矿脉品质
+  private gasConvert = false;                // 毒气转为电量
+  private shieldModuleUsed = false;          // 护盾发生器是否已消耗
+  private routeBuff: { qualityShift: number; riskShift: number; layersLeft: number; roomBoost?: number } | null = null;
+  private visitedRooms: string[] = [];
+  private baseBuilt: Record<number, boolean> = {};
+  private bossState: { id: string; name: string; hp: number; maxHp: number } | null = null;
+  private overloadUsedThisRun = 0;
+  private anomalySeenThisRun = 0;
+  private evacGuaranteed = false;            // 深渊生存者：消耗 combo 保证撤离
+  private creditUsed = false;                // 拾荒商人：赊账一次
+  private moduleMilestoneDone: number[] = [];
+  private bmDiscountRun = 0;                 // 本局黑市折扣累计（营地“黑市渠道”）
+  // v4 事件视图（route/room/module/base 阶段由 buildSnapshot 读取）
+  private roomView: RoomView | null = null;
+  private routeOptions: RouteChoice[] | null = null;
+  private moduleOptions: ModuleChoice[] | null = null;
+  private baseView: ForwardBaseView | null = null;
+  // 流派/特性派生的小状态
+  private pocketDim = false;        // 特殊物品不占格
+  private luckyPick = 0;            // 品质提升额外 %
+  private doubleDip = false;        // 每层额外 1 矿
+  private ghostBit = false;         // 穿透不消耗额外电量
+  private scrapArmor = false;       // 耐久越低收益越高
+  private staticCoil = false;       // 岩浆层电量减半
+  private moltenHeart = false;      // 超载收益 +15%
+  private overclockChip = false;    // 超载临界范围爆破不损伤
+  private echoLens = false;         // 探测器可预览路线
+  private detectorBonusRun = 0;     // 流派探测器加成
+  private accuracyBonusRun = 0;     // 流派精度加成
+  private slotBonusRun = 0;         // 流派背包格加成
+  private anomalyResistRun = 0;     // 流派异常抗性加成
   private gameoverInfo: UiSnapshot["gameover"] | null = null;
   private surfacedInfo: UiSnapshot["surfaced"] | null = null;
   private log: LogEntry[] = [];
@@ -178,6 +244,13 @@ export class MinerGame {
     this.difficulty = config.difficulty;
     this.pocket = Math.max(0, config.pocket);
     this.buffs = [...config.buffs];
+    // v4：流派 / 挑战 / 种子
+    this.archetype = config.archetype ?? null;
+    this.challenge = [...config.challenge];
+    this.seed = config.seed || "";
+    this.rnd = this.seed ? mulberry32(hashSeed(this.seed)) : Math.random;
+    this.modules = [];
+    this.traits = [];
     this.depth = startDepth;
     this.depthDisplay = startDepth;
     this.overheat = 0;
@@ -205,8 +278,39 @@ export class MinerGame {
     this.floatTexts = [];
     this.log = [];
 
-    // 装备加成汇总
+    // v4 状态重置
+    this.revealLevel = "none";
+    this.cautiousCooldown = 0;
+    this.standardStopped = false;
+    this.drillHeat = 0;
+    this.creatureImmune = 0;
+    this.heatGainMult = 1;
+    this.riskReduce = 0;
+    this.qualityBoostRun = 0;
+    this.stackCap = 99;
+    this.overloadGainBonus = 0;
+    this.overloadRiskMult = 1;
+    this.pierceCapBonus = 0;
+    this.baitAvoid = 0;
+    this.autoCompress = false;
+    this.revealQualityAuto = false;
+    this.gasConvert = false;
+    this.shieldModuleUsed = false;
+    this.routeBuff = null;
+    this.visitedRooms = [];
+    this.baseBuilt = {};
+    this.bossState = null;
+    this.overloadUsedThisRun = 0;
+    this.anomalySeenThisRun = 0;
+    this.evacGuaranteed = false;
+    this.creditUsed = false;
+    this.moduleMilestoneDone = [];
+    this.bmDiscountRun = 0;
+
+    // 装备加成汇总（实例自带 tier 缩放属性）
     this.equipStats = mergeEquipStats(...config.equipment.map((e) => e.stats));
+    // v4：装备规则特性
+    this.traits = config.equipment.map((e) => EQUIPMENT_DEFS[e.id]?.trait).filter((t): t is TraitId => !!t);
     this.qualityBonus = (this.hasBuff("quality") ? 15 : 0) + this.equipStats.qualityBonus;
     this.valueBonus = this.equipStats.valueBonus;
     this.wearReduce = (this.hasBuff("wear_less") ? 30 : 0) + this.equipStats.wearReduce;
@@ -214,6 +318,40 @@ export class MinerGame {
     this.banditReduce = this.equipStats.banditReduce;
     this.gasImmune = this.hasBuff("gas");
     this.shieldActive = this.hasBuff("shield");
+    // v4：特性派生
+    if (this.traits.includes("ice_core")) this.heatGainMult *= 0.7;
+    if (this.traits.includes("vent_cool")) this.overloadRiskMult *= 0.7;
+    if (this.traits.includes("rich_blood")) this.riskReduce += 0.5;
+    if (this.traits.includes("magnet")) this.autoCompress = true;
+    if (this.traits.includes("deep_sight")) this.revealQualityAuto = true;
+    if (this.traits.includes("gas_convert")) this.gasConvert = true;
+    if (this.traits.includes("lure_pouch")) this.baitAvoid = Math.max(this.baitAvoid, 40);
+    if (this.traits.includes("pocket_dim")) this.pocketDim = true;
+    if (this.traits.includes("lucky_pick")) this.luckyPick = 5;
+    if (this.traits.includes("double_dip")) this.doubleDip = true;
+    if (this.traits.includes("ghost_bit")) this.ghostBit = true;
+    if (this.traits.includes("scrap_armor")) this.scrapArmor = true;
+    if (this.traits.includes("static_coil")) this.staticCoil = true;
+    if (this.traits.includes("molten_heart")) this.moltenHeart = true;
+    if (this.traits.includes("overclock_chip")) this.overclockChip = true;
+    if (this.traits.includes("echo_lens")) this.echoLens = true;
+    // v4：流派初始加成
+    const arch = this.archetype ? ARCHETYPES[this.archetype] : null;
+    if (arch) {
+      if (this.archetype === "hunter") {
+        this.qualityBonus += 10;
+        this.detectorBonusRun = 1;
+        this.accuracyBonusRun = 20;
+      } else if (this.archetype === "overdriver") {
+        this.overloadGainBonus += 20;
+      } else if (this.archetype === "scavenger") {
+        this.slotBonusRun = 2;
+      } else if (this.archetype === "survivor") {
+        this.anomalyResistRun = 25;
+      }
+      this.logAdd(`流派「${arch.name}」生效`, "good");
+    }
+    if (this.challenge.includes("no_blackmarket")) this.logAdd("挑战：本局禁黑市", "warn");
 
     const ds = drillStats(save.upgrades.drill);
     this.maxDurability = ds.maxDurability;
@@ -222,11 +360,11 @@ export class MinerGame {
     this.power = this.maxPower;
 
     const bs = backpackStats(save.upgrades.backpack);
-    this.slots = bs.slots + this.equipStats.slotBonus + (this.hasBuff("slots") ? 2 : 0);
+    this.slots = bs.slots + this.equipStats.slotBonus + (this.hasBuff("slots") ? 2 : 0) + this.slotBonusRun;
     const ss = supportStats(save.upgrades.support);
     this.supports = ss.supports;
     const det = detectionStats(save.upgrades.detection);
-    this.detectors = det.detectors + this.equipStats.detectorBonus;
+    this.detectors = det.detectors + this.equipStats.detectorBonus + this.detectorBonusRun;
 
     // 携带的消耗品入包（格子不够则散落损失）
     for (const itemId of config.items) {
@@ -242,7 +380,7 @@ export class MinerGame {
       });
     }
 
-    const accuracy = Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100);
+    const accuracy = Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100 + this.accuracyBonusRun / 100);
     this.layer = this.genLayer(startDepth, accuracy);
     this.applyPreview(det.previewChance);
     this.applyAnomalyOnEntry();
@@ -259,9 +397,15 @@ export class MinerGame {
   chooseMode(mode: DrillMode): void {
     if (this.phase !== "observe") return;
     if (this.power <= 0) { this.logAdd("电量不足，无法钻进", "bad"); return; }
+    if (mode === "cautious" && this.cautiousCooldown > 0) {
+      this.logAdd(`钻机仍在冷却（还需 ${this.cautiousCooldown} 层），无法稳妥钻进`, "bad");
+      return;
+    }
     this.drillMode = mode;
+    this.standardStopped = false;
+    this.drillHeat = 0;
     if (mode === "overload" && this.layer) {
-      this.layer.ores = overloadOrePool(this.depth);
+      this.layer.ores = overloadOrePool(this.depth, this.rnd);
       this.logAdd("超载钻进：稀有矿权重提升！", "good");
     }
     const hardness = this.layer?.hardness ?? 1;
@@ -279,6 +423,7 @@ export class MinerGame {
     if (this.phase !== "observe" || !this.layer || this.detectors <= 0) return;
     if (this.detectorDisabled) { this.logAdd("探测器受到干扰，无法使用", "bad"); return; }
     this.detectors--;
+    this.revealLevel = "full";
     this.layer.revealed = {
       collapseRisk: this.layer.collapseRisk,
       quality: this.layer.quality,
@@ -310,6 +455,10 @@ export class MinerGame {
       case "repair":
         this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.4);
         this.logAdd(`${def.name}：耐久 +40%`, "good");
+        break;
+      case "repair_plus":
+        this.durability = this.maxDurability;
+        this.logAdd(`${def.name}：耐久完全恢复`, "good");
         break;
       case "fuel":
         this.power = Math.min(this.maxPower, this.power + 40);
@@ -358,7 +507,7 @@ export class MinerGame {
     if (this.phase !== "hazard") return;
     const ss = safetyStats(this.save.upgrades.safety);
     const overload = this.slotRatio() >= 1 ? 0.12 : 0;
-    if (Math.random() < ss.retreatSuccess - overload) {
+    if (this.rnd() < ss.retreatSuccess - overload) {
       this.logAdd("紧急撤退成功！", "good");
       this.finishRun();
     } else {
@@ -379,13 +528,15 @@ export class MinerGame {
         this.power = Math.max(0, this.power - (20 + 8 * severity));
         this.durability = Math.max(0, this.durability - (10 + 4 * severity));
         const risk = 0.2 + 0.1 * severity;
-        if (Math.random() < risk) {
+        if (this.rnd() < risk) {
           this.audio.play("accident");
           this.logAdd("驱赶失败！怪物反击造成事故", "bad");
           this.applyAccident("minor");
         } else {
           this.logAdd("驱赶成功，怪物退入黑暗", "good");
           this.scaredThisRun++;
+          this.save.stats.creaturesScared++;
+          this.save.codex.creatures++;
           const d = this.ensureDaily();
           d.tasks.task_creature = (d.tasks.task_creature ?? 0) + 1;
         }
@@ -398,7 +549,7 @@ export class MinerGame {
       }
       case "force": {
         const risk = 0.38 + 0.12 * severity;
-        if (Math.random() < risk) {
+        if (this.rnd() < risk) {
           this.audio.play("accident");
           this.logAdd("强行突破失败！", "bad");
           this.applyAccident("severe");
@@ -425,8 +576,8 @@ export class MinerGame {
     const extraRisk = MILK_RISK[Math.min(idx, MILK_RISK.length - 1)];
     this.power = Math.max(0, this.power - 12);
     this.durability = Math.max(0, this.durability - (6 + 2 * idx));
-    const baseCount = 2 + Math.floor(Math.random() * 2);
-    const yields = rollOreYield(this.depth, this.layer.ores, this.layer.quality, baseCount);
+    const baseCount = 2 + Math.floor(this.rnd() * 2);
+    const yields = rollOreYield(this.depth, this.layer.ores, this.layer.quality, baseCount, this.rnd);
     const gained = this.scaleYields(yields, mult, this.combo);
     const added = this.addOresToBag(gained, []);
     const value = added.reduce((s, a) => s + this.oreUnitValue(a.id, a.quality) * a.count, 0);
@@ -434,7 +585,7 @@ export class MinerGame {
     this.audio.play("milking");
     this.logAdd(`榨取矿脉 +${fmt(value)}（第 ${this.milkCount} 次）`, "good");
     const risk = Math.min(0.85, this.baseRisk() + extraRisk + (this.slotRatio() >= 1 ? 0.08 : 0));
-    if (Math.random() < risk) {
+    if (this.rnd() < risk) {
       this.audio.play("warning");
       this.logAdd("榨取时岩层剧烈震动……", "warn");
       this.applyAccident(this.rollSeverity(risk));
@@ -457,9 +608,39 @@ export class MinerGame {
     this.audio.play("click");
   }
 
+  // v4：稳妥/标准模式中途收手——按当前进度结算部分收益
+  drillStop(): void {
+    if (this.phase !== "drilling") return;
+    if (this.drillMode === "overload") return;
+    if (this.standardStopped) {
+      this.logAdd("本层已经收手过一次", "warn");
+      return;
+    }
+    this.standardStopped = true;
+    const frac = Math.max(0.3, Math.min(1, this.drillProgress + 0.15));
+    this.logAdd(`中途收手（进度 ${Math.round(frac * 100)}%），结算部分收益`, "info");
+    this.resolveDrill({ stopFraction: frac });
+  }
+
+  // v4：超载模式释放热量——热量越高收益越高，满 100 会过载受损
+  drillRelease(): void {
+    if (this.phase !== "drilling" || this.drillMode !== "overload") return;
+    const heat = this.drillHeat;
+    if (heat <= 0) return;
+    const burst = 1 + Math.min(1, heat / 100) * 0.8;
+    this.logAdd(`释放热量（${Math.round(heat)}%）！收益 ×${burst.toFixed(2)}`, "good");
+    this.audio.play("success");
+    // 范围爆破：一次结算时额外穿透一层
+    this.resolveDrill({ burst, blast: this.overclockChip || heat >= 60 });
+  }
+
   // ---------------- 黑市 ----------------
 
   openBlackMarket(): void {
+    if (this.challenge.includes("no_blackmarket")) {
+      this.logAdd("挑战「与世隔绝」生效：本局无法进入黑市", "warn");
+      return;
+    }
     if (this.phase !== "result" || !this.canBlackMarket) return;
     const favor = Math.min(5, this.save.favor + (this.hasBuff("favor") ? 1 : 0));
     this.bmStock = generateBmStock(this.depth, favor, {
@@ -488,6 +669,7 @@ export class MinerGame {
     this.loadValue = Math.max(0, this.loadValue - sell * slot.unitValue);
     if (slot.count <= 0) this.bag.splice(idx, 1);
     this.save.stats.totalSells += sell;
+    this.save.stats.bmTrades++;
     const d = this.ensureDaily();
     d.tasks.task_sell = (d.tasks.task_sell ?? 0) + sell;
     this.logAdd(`黑市售出 ${slot.name} ×${sell}，+${fmt(cash)}`, "good");
@@ -536,6 +718,7 @@ export class MinerGame {
     }
     // 库存扣减，售完下架
     item.stock -= 1;
+    this.save.stats.bmTrades++;
     if (item.stock <= 0) this.bmStock.splice(index, 1);
     this.audio.play("click");
     persistSave(this.save);
@@ -765,17 +948,28 @@ export class MinerGame {
   }
 
   private genLayer(depth: number, accuracy: number): Layer {
-    const l = generateLayer(depth, { accuracy });
+    const l = generateLayer(depth, { accuracy, rng: this.rnd });
+    // v4 信息分层：未探测时只显示征兆；探测器/高等级探测/特性可揭示真实信息
     if (this.nextTransparent) {
+      this.revealLevel = "full";
       l.revealed = { collapseRisk: l.collapseRisk, quality: l.quality, hazard: l.hazard };
       this.nextTransparent = false;
+    } else if (this.revealQualityAuto || this.save.upgrades.detection >= 4) {
+      this.revealLevel = "basic";
+      l.revealed = { collapseRisk: l.collapseRisk, quality: l.quality, hazard: l.hazard };
+    } else {
+      this.revealLevel = "none";
     }
     return l;
   }
 
+  // 进入下一层（10m），并根据深度触发：检查点营地 / Boss / 模块 / 路线分岔 / 特殊房间
   private advanceLayer(): void {
     this.depth += 10;
     this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
+    this.cautiousCooldown = Math.max(0, this.cautiousCooldown - 1);
+    this.creatureImmune = Math.max(0, this.creatureImmune - 1);
+    if (this.routeBuff && --this.routeBuff.layersLeft <= 0) this.routeBuff = null;
     this.milkCount = 0;
     this.supportsUsedThisLayer = false;
     this.detectorDisabled = false;
@@ -788,20 +982,444 @@ export class MinerGame {
     this.layer = this.genLayer(this.depth, Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100));
     this.applyPreview(det.previewChance);
     this.applyAnomalyOnEntry();
-    this.phase = "descending";
-    this.phaseTimer = 1.15;
+    this.roomView = null;
+    this.routeOptions = null;
+    this.moduleOptions = null;
+    this.baseView = null;
+    this.bossState = null;
     this.wallHole = 0;
     this.rockSwoosh = 1;
     this.oreGlints = [];
     this.eyes = [];
     this.audio.play("drillStop");
     this.audio.play("retreat");
+
+    // v4：事件优先级 = 检查点营地 > Boss > 模块里程碑 > 路线分岔 > 特殊房间 > 正常下降
+    if (CHECKPOINTS.includes(this.depth) && this.depth > 0) {
+      this.enterBase();
+    } else if (this.depth === 500 || this.depth === 950) {
+      this.enterBoss();
+    } else if (this.depth % 100 === 50 && !this.moduleMilestoneDone.includes(this.depth)) {
+      this.enterModule();
+    } else if (this.depth % 30 === 0 && this.depth > 0) {
+      this.enterRoute();
+    } else if (this.rnd() < 0.06 + (this.routeBuff?.roomBoost ? 0.15 : 0)) {
+      this.enterRoom();
+    } else {
+      this.phase = "descending";
+      this.phaseTimer = 1.15;
+    }
     this.pushUi();
   }
 
+  // ================= v4 事件入口 =================
+
+  private enterRoom(): void {
+    const pool = ROOM_ORDER.filter((r) => !this.visitedRooms.includes(r));
+    const id: RoomId = pool.length ? pool[Math.floor(this.rnd() * pool.length)] : ROOM_ORDER[0];
+    const def = ROOMS[id];
+    this.roomView = {
+      id,
+      title: def.title,
+      desc: def.desc,
+      options: def.options.map((o) => ({ ...o })),
+    };
+    this.phase = "room";
+    this.audio.play("click");
+    this.logAdd(`发现特殊房间：${def.title}`, "warn");
+  }
+
+  private enterRoute(): void {
+    this.routeOptions = [
+      { id: "rich", name: "富矿脉", desc: "沿矿脉深入，品质更高但岩层更不稳定", riskLabel: "塌方风险高", rewardLabel: "高品质矿石概率↑", icon: "💎", qualityShift: 1, riskShift: 0.08 },
+      { id: "facility", name: "旧设施", desc: "探索废弃设施，可能找到补给或触发事件", riskLabel: "风险中等", rewardLabel: "装备/补给机会", icon: "🏭", qualityShift: 0, riskShift: -0.03, roomBoost: 0.15 },
+      { id: "safe", name: "安全井", desc: "走支撑良好的旧井道，收益较低但很安全", riskLabel: "风险低", rewardLabel: "收益略降·撤离稳妥", icon: "🛗", qualityShift: -1, riskShift: -0.08 },
+    ];
+    this.phase = "route";
+    this.audio.play("click");
+    this.logAdd("前方出现分岔路线，需要选择前进方向", "info");
+  }
+
+  private enterModule(): void {
+    this.moduleOptions = pickModules(3, this.rnd, this.modules as ModuleId[]);
+    this.moduleMilestoneDone.push(this.depth);
+    this.phase = "module";
+    this.audio.play("click");
+    this.logAdd("到达一处古老补给站，可以安装一件装置", "good");
+  }
+
+  private enterBase(): void {
+    const built = !!this.baseBuilt[this.depth];
+    const options = built
+      ? [
+          { id: "repair", label: "临时检修", desc: "钻机耐久 +20%（每次营地限一次）", icon: "🔧" },
+          { id: "storage", label: "扩展货舱", desc: "本局背包格 +3", icon: "📦" },
+          { id: "detect", label: "补充探测器", desc: "探测器 +2", icon: "📡" },
+          { id: "trade", label: "黑市渠道", desc: "本局黑市折扣 +10%", icon: "🪙" },
+          { id: "leave", label: "继续深入", desc: "不停留，直接下潜", icon: "🚶" },
+        ]
+      : [
+          { id: "build", label: "交付材料·建立营地", desc: "需要 5 个普通铜矿；建立后可获得补给选择", icon: "🏗️" },
+          { id: "leave", label: "暂不建立", desc: "继续深入", icon: "🚶" },
+        ];
+    this.baseView = {
+      depth: this.depth,
+      built,
+      needOre: built ? null : { id: "copper", quality: "normal", count: 5 },
+      options,
+    };
+    this.phase = "base";
+    this.audio.play("click");
+    this.logAdd(`${this.depth}m 处有一座旧升降井检查点`, "info");
+  }
+
+  private enterBoss(): void {
+    const def = this.depth >= 950
+      ? { id: "abyss_lord", name: "深渊之主", hp: 150, maxHp: 150 }
+      : { id: "magma_behemoth", name: "岩浆巨兽", hp: 100, maxHp: 100 };
+    this.bossState = { ...def };
+    this.phase = "boss";
+    this.audio.play("creature");
+    this.logAdd(`${def.name} 挡住了去路！`, "bad");
+  }
+
+  private continueToDrill(): void {
+    // 事件结算完成后进入该层钻进观察
+    this.phase = "descending";
+    this.phaseTimer = 0.8;
+  }
+
+  // ================= v4 事件操作 =================
+
+  routeChoose(id: string): void {
+    if (this.phase !== "route") return;
+    const route = this.routeOptions?.find((r) => r.id === id);
+    if (!route) return;
+    this.routeOptions = null;
+    // 路线修正应用到当前层
+    if (this.layer) {
+      const order: Array<"barren" | "normal" | "rich" | "legendary"> = ["barren", "normal", "rich", "legendary"];
+      const i = order.indexOf(this.layer.quality);
+      const shift = route.qualityShift ?? 0;
+      this.layer.quality = order[Math.max(0, Math.min(order.length - 1, i + shift))];
+      this.layer.collapseRisk = Math.min(0.9, Math.max(0.02, this.layer.collapseRisk + (route.riskShift ?? 0)));
+      this.layer.instability = this.layer.collapseRisk;
+    }
+    this.routeBuff = {
+      qualityShift: route.qualityShift ?? 0,
+      riskShift: route.riskShift ?? 0,
+      layersLeft: 2,
+      roomBoost: route.roomBoost ?? 0,
+    };
+    this.logAdd(`选择「${route.name}」路线`, "good");
+    this.audio.play("click");
+    this.continueToDrill();
+    this.pushUi();
+  }
+
+  roomChoose(optionId: string): void {
+    if (this.phase !== "room" || !this.roomView) return;
+    const room = this.roomView;
+    const opt = room.options.find((o) => o.id === optionId);
+    if (!opt) return;
+    const roomId = room.id;
+    if (!this.visitedRooms.includes(roomId)) {
+      this.visitedRooms.push(roomId);
+      if (!this.save.codex.rooms.includes(roomId)) this.save.codex.rooms.push(roomId);
+    }
+    this.roomView = null;
+    this.audio.play("click");
+    // 结算选项效果
+    switch (roomId) {
+      case "minecart":
+        if (optionId === "ride") {
+          this.depth += 20;
+          this.depthDisplay = this.depth;
+          this.logAdd("矿车呼啸而下，直接下潜 20m！", "good");
+          this.phase = "descending";
+          this.phaseTimer = 0.4;
+          this.pushUi();
+          return;
+        } else if (optionId === "scrap") {
+          this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.2);
+          this.logAdd("拆解矿车获得材料：耐久 +20%", "good");
+        }
+        break;
+      case "collapsed_warehouse":
+        if (optionId === "search") {
+          if (this.rnd() < 0.25) {
+            this.audio.play("accident");
+            this.applyAccident("minor");
+            if (this.runEnded) { this.pushUi(); return; }
+            this.logAdd("翻找时岩层塌落，受了点小伤", "bad");
+          } else {
+            const ids = Object.keys(CONSUMABLES);
+            const pick = ids[Math.floor(this.rnd() * ids.length)];
+            const def = CONSUMABLES[pick];
+            if (def && this.usedSlots() < this.slots) {
+              this.bag.push({ key: "item:" + pick, kind: "item", id: pick, count: 1, name: def.name, color: def.color, icon: def.icon, value: 0, unitValue: 0 });
+              this.logAdd(`搜寻到补给：${def.name}`, "good");
+            } else {
+              this.pocket += 40;
+              this.logAdd("找到一小袋现金 +40", "good");
+            }
+          }
+        } else if (optionId === "clear") {
+          this.durability = Math.max(0, this.durability - 8);
+          this.pocket += 60;
+          this.logAdd("清理通道，获得报酬 +60 现金", "good");
+        }
+        break;
+      case "bm_backdoor":
+        if (optionId === "trade") {
+          const ids = Object.keys(CONSUMABLES);
+          const pick = ids[Math.floor(this.rnd() * ids.length)];
+          const def = CONSUMABLES[pick];
+          const price = Math.round(def.basePrice * 0.8);
+          if (this.pocket >= price) {
+            this.pocket -= price;
+            this.bag.push({ key: "item:" + pick, kind: "item", id: pick, count: 1, name: def.name, color: def.color, icon: def.icon, value: 0, unitValue: 0 });
+            this.logAdd(`暗门交易：购入 ${def.name}（8 折）`, "good");
+          } else {
+            this.logAdd("现金不足，暗门商人摇头离开", "warn");
+          }
+        } else if (optionId === "tip") {
+          this.save.favor = Math.min(5, this.save.favor + 1);
+          this.logAdd("向地面举报黑市，好感 +1", "good");
+        }
+        break;
+      case "geolab":
+        if (optionId === "analyze") {
+          this.qualityBoostRun += 15;
+          this.logAdd("研究岩样：本局高品质矿石概率 +15%", "good");
+        } else if (optionId === "extract") {
+          const cash = Math.round(this.loadValue * 0.1);
+          this.pocket += cash;
+          this.logAdd(`提取数据变现：+${fmt(cash)} 现金`, "good");
+        }
+        break;
+      case "nest":
+        if (optionId === "steal") {
+          if (this.rnd() < 0.5) {
+            const y = rollOreYield(this.depth, this.layer?.ores ?? ["copper"], "rich", 3 + Math.floor(this.rnd() * 3), this.rnd);
+            const added = this.addOresToBag(this.scaleYields(y, 1, this.combo), []);
+            const v = added.reduce((s, a) => s + this.oreUnitValue(a.id, a.quality) * a.count, 0);
+            this.logAdd(`偷得稀有矿卵 +${fmt(v)}`, "good");
+          } else {
+            this.audio.play("accident");
+            this.applyAccident("severe");
+            if (this.runEnded) { this.pushUi(); return; }
+            this.logAdd("巢穴被惊动！被生物袭击", "bad");
+          }
+        } else if (optionId === "bait") {
+          this.creatureImmune = 3;
+          this.logAdd("设置诱饵：接下来 3 层不会遭遇地底生物", "good");
+        }
+        break;
+      case "cooling_spring":
+        if (optionId === "cool") {
+          this.overheat = 0;
+          this.heatGainMult *= 0.8;
+          this.logAdd("灌满冷却剂：热量清零，本局热量增长 -20%", "good");
+        } else if (optionId === "soak") {
+          this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.25);
+          this.logAdd("浸泡检修：耐久 +25%", "good");
+        }
+        break;
+      case "ancient_gate":
+        if (optionId === "puzzle") {
+          const r = this.rnd();
+          if (r < 0.34) {
+            const y = rollOreYield(this.depth, this.layer?.ores ?? ["copper"], "legendary", 5 + Math.floor(this.rnd() * 4), this.rnd);
+            const added = this.addOresToBag(this.scaleYields(y, 1, this.combo), []);
+            const v = added.reduce((s, a) => s + this.oreUnitValue(a.id, a.quality) * a.count, 0);
+            this.logAdd(`破解机关！丰厚的矿石奖励 +${fmt(v)}`, "good");
+          } else if (r < 0.67) {
+            this.moduleOptions = pickModules(3, this.rnd, this.modules as ModuleId[]);
+            this.phase = "module";
+            this.audio.play("click");
+            this.logAdd("机械门内藏着一件古老装置", "good");
+            this.pushUi();
+            return;
+          } else {
+            this.audio.play("accident");
+            this.applyAccident("severe");
+            if (this.runEnded) { this.pushUi(); return; }
+            this.logAdd("机关触发陷阱！", "bad");
+          }
+        } else if (optionId === "force") {
+          this.durability = Math.max(0, this.durability - this.maxDurability * 0.15);
+          this.logAdd("强行破门：耐久 -15%", "warn");
+        }
+        break;
+      case "unstable_shaft":
+        if (optionId === "escape") {
+          this.logAdd("沿通风井紧急撤离！", "good");
+          this.finishRun();
+          return;
+        } else if (optionId === "reinforce") {
+          this.riskReduce = Math.min(0.5, this.riskReduce + 0.25);
+          this.logAdd("加固井壁：本局塌方风险 -25%", "good");
+        }
+        break;
+    }
+    this.continueToDrill();
+    this.pushUi();
+  }
+
+  chooseModule(moduleId: string): void {
+    if (this.phase !== "module") return;
+    const opt = this.moduleOptions?.find((m) => m.id === moduleId);
+    if (!opt) return;
+    const id = opt.id as ModuleId;
+    this.moduleOptions = null;
+    if (!this.modules.includes(id)) this.modules.push(id);
+    if (!this.save.codex.modules.includes(id)) this.save.codex.modules.push(id);
+    this.audio.play("success");
+    // 立即生效的模块
+    if (id === "beacon") this.nextTransparent = true;
+    if (id === "shield") { this.shieldModuleUsed = true; this.shieldActive = true; }
+    if (id === "scanner") this.revealQualityAuto = true;
+    if (id === "tractor") this.autoCompress = true;
+    if (id === "gas_engine") this.gasConvert = true;
+    if (id === "compactor") this.stackCap = 999;
+    if (id === "coolant") { this.heatGainMult *= 0.6; }
+    if (id === "overclock") this.overloadGainBonus += 25;
+    if (id === "vent") this.overloadRiskMult *= 0.6;
+    if (id === "drill_head") this.pierceCapBonus += 3;
+    if (id === "dredge") { /* 结算时生效 */ }
+    this.logAdd(`安装装置：${opt.name}`, "good");
+    this.continueToDrill();
+    this.pushUi();
+  }
+
+  baseChoose(optionId: string): void {
+    if (this.phase !== "base" || !this.baseView) return;
+    const base = this.baseView;
+    if (!base.built && optionId === "build") {
+      const need = base.needOre!;
+      const key = oreStackKey(need.id as OreId, need.quality);
+      const slot = this.bag.find((s) => s.key === key && s.kind === "ore");
+      if (!slot || slot.count < need.count) {
+        this.logAdd(`材料不足：需要 ${ORE_QUALITIES[need.quality].name}${ORES[need.id as OreId].name} ×${need.count}`, "bad");
+        return;
+      }
+      slot.count -= need.count;
+      slot.value = slot.count * slot.unitValue;
+      this.loadValue = Math.max(0, this.loadValue - need.count * slot.unitValue);
+      if (slot.count <= 0) this.bag.splice(this.bag.indexOf(slot), 1);
+      this.baseBuilt[this.depth] = true;
+      base.built = true;
+      base.needOre = null;
+      base.options = [
+        { id: "repair", label: "临时检修", desc: "钻机耐久 +20%（每次营地限一次）", icon: "🔧" },
+        { id: "storage", label: "扩展货舱", desc: "本局背包格 +3", icon: "📦" },
+        { id: "detect", label: "补充探测器", desc: "探测器 +2", icon: "📡" },
+        { id: "trade", label: "黑市渠道", desc: "本局黑市折扣 +10%", icon: "🪙" },
+        { id: "leave", label: "继续深入", desc: "不停留，直接下潜", icon: "🚶" },
+      ];
+      this.logAdd("营地建立完成！可以选择补给方向", "good");
+      this.audio.play("support");
+      this.pushUi();
+      return;
+    }
+    if (!base.built) {
+      this.baseView = null;
+      this.continueToDrill();
+      this.pushUi();
+      return;
+    }
+    // 已建成：选择一项补给后离开
+    switch (optionId) {
+      case "repair":
+        this.durability = Math.min(this.maxDurability, this.durability + this.maxDurability * 0.2);
+        this.logAdd("营地检修：耐久 +20%", "good");
+        break;
+      case "storage":
+        this.slots += 3;
+        this.logAdd("扩展货舱：背包格 +3", "good");
+        break;
+      case "detect":
+        this.detectors += 2;
+        this.logAdd("补充探测器：探测器 +2", "good");
+        break;
+      case "trade":
+        this.bmDiscountRun = (this.bmDiscountRun ?? 0) + 0.1;
+        this.logAdd("黑市渠道：本局黑市折扣 +10%", "good");
+        break;
+      case "leave":
+        break;
+      default:
+        return;
+    }
+    this.baseView = null;
+    this.continueToDrill();
+    this.audio.play("click");
+    this.pushUi();
+  }
+
+  bossAction(actionId: string): void {
+    if (this.phase !== "boss" || !this.bossState) return;
+    const boss = this.bossState;
+    let dmg = 0;
+    if (actionId === "drill") {
+      this.power = Math.max(0, this.power - 15);
+      this.durability = Math.max(0, this.durability - 10);
+      dmg = 35;
+    } else if (actionId === "dodge") {
+      if (this.rnd() < 0.5) {
+        dmg = 60;
+        this.logAdd("你抓住破绽全力反击！", "good");
+      } else {
+        this.durability = Math.max(0, this.durability - 20);
+        this.logAdd("闪避失败，被巨兽扫中", "bad");
+      }
+    } else if (actionId === "bribe") {
+      const lost = this.removeOreValue(0.1);
+      dmg = 70;
+      this.logAdd(`投掷矿石吸引注意（损失 ${fmt(lost)}），趁机猛攻`, "warn");
+    }
+    boss.hp = Math.max(0, boss.hp - dmg);
+    // Boss 反击
+    if (boss.hp > 0) {
+      this.durability = Math.max(0, this.durability - (8 + Math.floor(this.rnd() * 10)));
+      this.power = Math.max(0, this.power - 6);
+      this.logAdd(`${boss.name} 反击！设备受损`, "bad");
+    }
+    if (this.durability <= 0 || this.power <= 0) {
+      this.endByDisaster();
+      return;
+    }
+    if (boss.hp <= 0) {
+      this.audio.play("success");
+      this.logAdd(`击败了 ${boss.name}！`, "good");
+      this.flash = 0.5;
+      this.flashColor = "#ffd166";
+      // 奖励：现金 + 高品质矿石
+      this.pocket += 120 + Math.floor(this.depth * 0.2);
+      const y = rollOreYield(this.depth, this.layer?.ores ?? ["gold"], "legendary", 5 + Math.floor(this.rnd() * 3), this.rnd);
+      const added = this.addOresToBag(this.scaleYields(y, 1, this.combo), []);
+      const v = added.reduce((s, a) => s + this.oreUnitValue(a.id, a.quality) * a.count, 0);
+      this.logAdd(`战利品：+${fmt(v)} 矿石`, "good");
+      if (this.rnd() < 0.6 && !this.modules.includes("shield")) {
+        this.moduleOptions = pickModules(3, this.rnd, this.modules as ModuleId[]);
+        this.phase = "module";
+        this.pushUi();
+        return;
+      }
+      this.bossState = null;
+      this.continueToDrill();
+      this.pushUi();
+      return;
+    }
+    this.pushUi();
+  }
+
+
+
   private applyPreview(chance: number): void {
-    if (!this.layer || chance <= 0 || Math.random() >= chance) return;
-    const next = generateLayer(this.depth + 10, {});
+    if (!this.layer || chance <= 0 || this.rnd() >= chance) return;
+    const next = generateLayer(this.depth + 10, { rng: this.rnd });
     this.layer.signals.push(`[预知] 下一层塌方风险：${riskLabel(next.collapseRisk)}`);
   }
 
@@ -810,6 +1428,9 @@ export class MinerGame {
     if (!l) return;
     if (l.hazard === "anomaly" && l.anomalyEffect) {
       const e = l.anomalyEffect;
+      this.anomalySeenThisRun++;
+      this.save.stats.anomaliesSeen++;
+      if (!this.save.codex.anomalies.includes(e)) this.save.codex.anomalies.push(e);
       if (e.includes("双倍法则")) { this.anomalyDouble = true; this.anomalyDoubleLoss = true; }
       else if (e.includes("单行道")) this.retreatBlocked += 2;
       else if (e.includes("探测干扰")) this.detectorDisabled = true;
@@ -835,7 +1456,7 @@ export class MinerGame {
   }
 
   private rollSeverity(risk: number): "minor" | "severe" | "disaster" {
-    const r = Math.random();
+    const r = this.rnd();
     const severeThresh = 0.62 - risk * 0.25;
     const disasterThresh = 0.9 - risk * 0.25;
     if (r > disasterThresh) return "disaster";
@@ -898,6 +1519,9 @@ export class MinerGame {
     const pocketLost = Math.round(this.pocket * 0.5);
     const pocketReturn = Math.round(this.pocket) - pocketLost;
     this.save.cash += pocketReturn;
+    // 挑战词缀收益倍率：失败也按救回价值给予一部分现金补偿
+    const challengeMult = this.challenge.reduce((m, c) => m * (CHALLENGE_DEFS[c]?.rewardMult ?? 1), 1);
+    if (challengeMult > 1) this.save.cash += Math.round(saved * (challengeMult - 1) * 0.5);
     // 统计
     const wasBest = saved > this.save.stats.bestRunValue;
     this.save.stats.runs++;
@@ -932,8 +1556,10 @@ export class MinerGame {
   private depositBag(): void {
     for (const slot of this.bag) {
       if (slot.kind === "ore" && slot.quality !== undefined) {
+        const ck = oreStackKey(slot.id as OreId, slot.quality);
+        this.save.codex.minerals[ck] = (this.save.codex.minerals[ck] ?? 0) + slot.count;
         this.save.warehouseStacks.push({
-          key: oreStackKey(slot.id as OreId, slot.quality),
+          key: ck,
           count: slot.count,
           unitValue: Math.round(slot.unitValue),
         });
@@ -954,6 +1580,7 @@ export class MinerGame {
 
   private finishRun(): void {
     if (this.runEnded) return;
+    const challengeMult = this.challenge.reduce((m, c) => m * (CHALLENGE_DEFS[c]?.rewardMult ?? 1), 1);
     const banked = Math.round(this.loadValue);
     const depthAt = this.depth;
     // 背包矿石入库（锁定单价）；消耗品回仓库；局内购入装备成功撤离后入库
@@ -966,7 +1593,7 @@ export class MinerGame {
     this.save.cash += pocketReturn;
     // 评级：深度 × 货值 × 生存完整度（只奖励现金）
     const rating = computeRating(depthAt, banked, this.durability / Math.max(1, this.maxDurability), this.difficulty);
-    const bonusCash = rating.bonusCash;
+    const bonusCash = rating.bonusCash + Math.round(banked * (challengeMult - 1));
     this.save.cash += bonusCash;
     const wasBest = banked > this.save.stats.bestRunValue;
     this.save.stats.runs++;
@@ -995,9 +1622,9 @@ export class MinerGame {
   }
 
   private maybeDropItem(): { name: string; icon: string } | null {
-    if (Math.random() >= 0.08) return null;
+    if (this.rnd() >= 0.08) return null;
     const ids = Object.keys(CONSUMABLES);
-    const id = ids[Math.floor(Math.random() * ids.length)];
+    const id = ids[Math.floor(this.rnd() * ids.length)];
     const def = CONSUMABLES[id];
     if (!def) return null;
     if (this.usedSlots() >= this.slots) {
@@ -1016,7 +1643,7 @@ export class MinerGame {
   private applyOreMutation(): number {
     const ores = this.bag.filter((s) => s.kind === "ore");
     if (ores.length === 0) return 0;
-    const slot = ores[Math.floor(Math.random() * ores.length)];
+    const slot = ores[Math.floor(this.rnd() * ores.length)];
     slot.unitValue = slot.unitValue * 1.1;
     const newVal = slot.count * slot.unitValue;
     const delta = newVal - slot.value;
@@ -1026,12 +1653,13 @@ export class MinerGame {
   }
 
   private rollPenetration(): number {
-    const bonus = Math.min(0.08, 0.006 * this.save.upgrades.drill) + this.pierceBuff / 100;
+    const bonus = Math.min(0.08, 0.006 * this.save.upgrades.drill) + this.pierceBuff / 100 + (this.modules.includes("drill_head") ? 0.1 : 0);
     const base = (PENETRATE_BASE[this.drillMode] + bonus) * (1 - this.wearPenalty);
     let layers = 1;
-    while (layers < PENETRATE_CAP) {
+    const cap = PENETRATE_CAP + this.pierceCapBonus;
+    while (layers < cap) {
       const p = base * Math.pow(PENETRATE_DECAY, layers - 1);
-      if (Math.random() >= p) break;
+      if (this.rnd() >= p) break;
       layers++;
     }
     return layers;
@@ -1085,14 +1713,25 @@ export class MinerGame {
   }
   // ---------------- 钻进结算 ----------------
 
-  private resolveDrill(): void {
+  private resolveDrill(opts: { stopFraction?: number; burst?: number; blast?: boolean; overheated?: boolean } = {}): void {
     if (!this.layer) return;
     const events: string[] = [];
     const mode = this.drillMode;
     const ds = drillStats(this.save.upgrades.drill);
-    const modeMult = mode === "cautious" ? 0.75 : mode === "standard" ? 1 : 1.7 + ds.overloadGain;
+    // v4：超载收益加成（流派/特性/模块）
+    const archOverload = this.archetype === "overdriver" ? 0.2 : 0;
+    const molten = this.moltenHeart ? 0.15 : 0;
+    const overclockMod = this.modules.includes("overclock") ? 0.25 : 0;
+    const ventMod = this.modules.includes("vent") ? -0.1 : 0;
+    const modeMult = mode === "cautious" ? 0.75 : mode === "standard" ? 1 : 1.7 + ds.overloadGain + archOverload + molten + overclockMod + ventMod;
     const comboDelta = mode === "cautious" ? 0.08 : mode === "standard" ? 0.1 : 0.13;
-    const layers = this.rollPenetration();
+    const stopFrac = opts.stopFraction ?? 1;
+    const burst = opts.burst ?? 1;
+    let layers = this.rollPenetration();
+    if (opts.blast) layers += 1; // 超载范围爆破
+    layers = Math.min(PENETRATE_CAP + this.pierceCapBonus, layers);
+    // 收手/过热停机时收益按进度折算
+    const fracMult = stopFrac < 1 ? 0.45 + 0.55 * stopFrac : 1;
     let totalValue = 0;
     let interrupted = false;
     let droppedItem: { name: string; icon: string } | null = null;
@@ -1105,11 +1744,20 @@ export class MinerGame {
       const isFirst = i === 0;
       const double = isFirst ? this.anomalyDouble : !!l.anomalyEffect?.includes("双倍法则");
       const comboBefore = this.combo;
-      const yields = rollOreYield(this.depth, l.ores, l.quality);
-      let gained = this.scaleYields(yields, modeMult, comboBefore);
+      const yields = rollOreYield(this.depth, l.ores, l.quality, undefined, this.rnd);
+      let gained = this.scaleYields(yields, modeMult * fracMult * burst, comboBefore);
       if (double) {
-        gained = gained.map((g) => ({ ...g, count: Math.min(99, g.count * 2) }));
+        gained = gained.map((g) => ({ ...g, count: Math.min(this.stackCap, g.count * 2) }));
         this.logAdd("深渊双倍法则：本层收益翻倍！", "good");
+      }
+      // 淘金网模块 / 二次采收特性：额外矿石
+      if (this.modules.includes("dredge")) {
+        const extra = rollOreYield(this.depth, l.ores, l.quality, 1 + Math.floor(this.rnd() * 3), this.rnd);
+        gained = gained.concat(this.scaleYields(extra, 1, 1));
+      }
+      if (this.doubleDip) {
+        const extra = rollOreYield(this.depth, l.ores, l.quality, 1, this.rnd);
+        gained = gained.concat(this.scaleYields(extra, 1, 1));
       }
       const added = this.addOresToBag(gained, events);
       this.resultOres = this.resultOres.concat(this.toBagSlots(added));
@@ -1120,7 +1768,13 @@ export class MinerGame {
 
       const powerBase = (7 + l.hardness * 1.6) * (mode === "cautious" ? 1.2 : mode === "standard" ? 1 : 1.5);
       const heatMult = 1 + this.overheat * 0.003;
-      this.power = Math.max(0, this.power - powerBase * heatMult);
+      // 幻影钻头：穿透不消耗额外电量
+      const powerMult = mode === "overload" && this.ghostBit ? 0.35 : 1;
+      this.power = Math.max(0, this.power - powerBase * heatMult * powerMult);
+      // 静电线圈：岩浆带电量减半
+      if (this.staticCoil && l.stage === "magma") {
+        this.power = Math.max(0, this.power - powerBase * heatMult * 0.5);
+      }
 
       // 温和难度无设备损耗
       if (DIFFICULTY_DEFS[this.difficulty].wear) {
@@ -1130,21 +1784,28 @@ export class MinerGame {
         this.durability = Math.max(0, this.durability - durLoss);
       }
 
+      // 岩浆带热量
       if (l.stage === "magma") {
-        const heatGain = (12 + 8 * l.hazardSeverity) * (mode === "cautious" ? 0.45 : mode === "standard" ? 1 : 1.65);
+        const heatGain = (12 + 8 * l.hazardSeverity) * (mode === "cautious" ? 0.45 : mode === "standard" ? 1 : 1.65) * this.heatGainMult;
         this.overheat = Math.min(100, this.overheat + heatGain);
         if (mode === "cautious") this.overheat = Math.max(0, this.overheat - 8);
         if (this.overheat >= 100) {
-          if (DIFFICULTY_DEFS[this.difficulty].wear) {
+          if (DIFFICULTY_DEFS[this.difficulty].wear && !this.modules.includes("coolant")) {
             this.durability = Math.max(0, this.durability - 8);
           }
           events.push("设备过热！耐久持续下降");
         }
       }
 
-      if (l.hazard === "gas" && Math.random() < 0.65) {
-        if (this.gasImmune) {
-          events.push("防毒面罩生效，毒气无效");
+      // 毒气：防毒面罩 / 废气转化 / 净化剂
+      if (l.hazard === "gas" && this.rnd() < 0.65) {
+        if (this.gasImmune || this.gasConvert) {
+          if (this.gasConvert && !this.gasImmune) {
+            this.power = Math.min(this.maxPower, this.power + 15);
+            events.push("废气引擎：毒气转化为电量 +15");
+          } else {
+            events.push("防毒面罩生效，毒气无效");
+          }
         } else {
           const ss = safetyStats(this.save.upgrades.safety);
           const drain = (16 + 10 * l.hazardSeverity) * (1 - ss.gasResist);
@@ -1168,10 +1829,12 @@ export class MinerGame {
 
       let risk = this.baseRisk(isFirst ? this.supportsUsedThisLayer : false);
       if (l.anomalyEffect?.includes("重力紊乱")) risk = Math.min(0.9, risk * 0.55);
-      risk *= mode === "cautious" ? 0.55 : mode === "standard" ? 1 : 1.65;
+      const modeRisk = mode === "cautious" ? 0.55 : mode === "standard" ? 1 : 1.65 * this.overloadRiskMult;
+      risk *= modeRisk;
+      if (this.archetype === "survivor") risk *= 0.92;
 
       this.anomalyDoubleLoss = double;
-      const severity = Math.random() < risk ? this.rollSeverity(risk) : null;
+      const severity = this.rnd() < risk ? this.rollSeverity(risk) : null;
       if (severity) {
         this.audio.play("warning");
         this.applyAccident(severity);
@@ -1182,16 +1845,22 @@ export class MinerGame {
         }
       }
 
+      // 生物事件：诱饵/免疫可自动避免
       if (l.hazard === "creature" && !severity) {
-        this.hazardSeverity = l.hazardSeverity;
-        this.audio.play("creature");
-        this.logAdd("一头地底生物挡住了去路……", "warn");
-        interruptHazard = true;
-        break;
+        const avoid = Math.max(this.baitAvoid, this.creatureImmune > 0 ? 100 : 0, this.modules.includes("bait") ? 50 : 0);
+        if (this.rnd() * 100 < avoid) {
+          events.push("诱饵起效，地底生物绕开了你");
+        } else {
+          this.hazardSeverity = l.hazardSeverity;
+          this.audio.play("creature");
+          this.logAdd("一头地底生物挡住了去路……", "warn");
+          interruptHazard = true;
+          break;
+        }
       }
 
       // 强盗（硬核）：每层 12% 概率，出现在钻完该层之后
-      if (this.difficulty === "hardcore" && !severity && Math.random() < DIFFICULTY_DEFS.hardcore.banditChance) {
+      if (this.difficulty === "hardcore" && !severity && this.rnd() < DIFFICULTY_DEFS.hardcore.banditChance) {
         interruptBandit = true;
         break;
       }
@@ -1206,11 +1875,19 @@ export class MinerGame {
       if (i < layers - 1) {
         this.depth += 10;
         this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
+        this.cautiousCooldown = Math.max(0, this.cautiousCooldown - 1);
         const det = detectionStats(this.save.upgrades.detection);
         this.layer = this.genLayer(this.depth, Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100));
         this.milkCount = 0;
       }
     }
+
+    // v4：超载统计（流派解锁）与稳妥模式冷却
+    if (mode === "overload") {
+      this.overloadUsedThisRun++;
+      this.save.stats.overloadDrills++;
+    }
+    if (mode === "cautious") this.cautiousCooldown = 1;
 
     this.unlockCheckpoints();
     const d = this.ensureDaily();
@@ -1221,8 +1898,8 @@ export class MinerGame {
     this.anomalyDouble = false;
     this.anomalyDoubleLoss = false;
 
-    // 检查点层必出黑市 + 每层 15% 随机黑市
-    this.canBlackMarket = BM_DEPTHS.includes(this.depth) || Math.random() < 0.15;
+    // 检查点层必出黑市 + 每层 15% 随机黑市（禁黑市挑战除外）
+    this.canBlackMarket = !this.challenge.includes("no_blackmarket") && (BM_DEPTHS.includes(this.depth) || this.rnd() < 0.15);
 
     if (layers > 1) {
       this.floatTexts.push({
@@ -1251,7 +1928,7 @@ export class MinerGame {
       return;
     }
     if (interruptBandit) {
-      this.banditSeverity = 1 + Math.floor(Math.random() * 3);
+      this.banditSeverity = 1 + Math.floor(this.rnd() * 3);
       this.phase = "bandit";
       this.audio.play("creature");
       this.logAdd("强盗拦住了去路！", "bad");
@@ -1354,6 +2031,19 @@ export class MinerGame {
         });
       }
       this.shake = Math.max(this.shake, 1.2 + (this.drillMode === "overload" ? 2.2 : 0.6));
+      // v4：超载模式热量累积（满 100 过载受损停机）
+      if (this.drillMode === "overload") {
+        const heatRate = (26 + (this.layer?.hazardSeverity ?? 1) * 6) * this.heatGainMult;
+        this.drillHeat = Math.min(100, this.drillHeat + dt * heatRate);
+        if (this.drillHeat >= 100) {
+          this.audio.play("warning");
+          this.logAdd("过热！钻机过载受损，被迫停机…", "bad");
+          this.durability = Math.max(0, this.durability - 15);
+          this.applyAccident("minor");
+          if (!this.runEnded) this.resolveDrill({ stopFraction: 0.6, overheated: true });
+          return;
+        }
+      }
       if (this.drillProgress >= 1) {
         this.audio.play("drillStop");
         this.audio.play("ore", this.layer && this.layer.quality === "legendary" ? 1 : this.layer && this.layer.quality === "rich" ? 0.75 : 0.4);
@@ -1388,6 +2078,90 @@ export class MinerGame {
 
   // ---------------- 快照 ----------------
 
+
+  private canStopDrill(): boolean {
+    return this.phase === "drilling" && this.drillMode !== "overload";
+  }
+
+  private buildBossView(): BossView | null {
+    const b = this.bossState;
+    if (!b) return null;
+    const desc = b.id === "abyss_lord"
+      ? "盘踞在深渊尽头的远古存在，浑身缠绕着深渊之力，寻常钻头难以伤它分毫。"
+      : "岩浆带深处的巨兽，熔岩甲壳坚硬如铁，必须寻找破绽才能造成重创。";
+    return {
+      id: b.id, name: b.name, desc, hp: b.hp, maxHp: b.maxHp,
+      actions: [
+        { id: "drill", label: "正面强攻", desc: "消耗 15 电量、10 耐久，稳定造成 35 点伤害", icon: "⚡" },
+        { id: "dodge", label: "伺机闪避", desc: "50% 概率造成 60 点伤害，失败则额外受损", icon: "💨" },
+        { id: "bribe", label: "投掷矿石", desc: "损失 10% 矿石价值，造成 70 点伤害", icon: "🪨" },
+      ],
+    };
+  }
+
+  private buildRiskRange(): RiskRange | null {
+    const l = this.layer;
+    if (!l) return null;
+    const base = this.baseRisk();
+    const c = Math.min(0.9, base * 0.55);
+    const o = Math.min(0.9, base * 1.65 * this.overloadRiskMult);
+    const min = Math.round(c * 100);
+    const max = Math.round(o * 100);
+    const cur = this.drillMode === "cautious" ? c : this.drillMode === "overload" ? o : base;
+    const label = riskLabel(cur);
+    const color = cur < 0.16 ? "#4ade80" : cur < 0.28 ? "#facc15" : cur < 0.42 ? "#fb923c" : "#f87171";
+    return { min, max, label, color };
+  }
+
+  private buildEvac(): EvacInfo {
+    const lossPct = this.anomalyDoubleLoss
+      ? Math.min(0.95, safetyStats(this.save.upgrades.safety).disasterLoss * 2)
+      : safetyStats(this.save.upgrades.safety).disasterLoss;
+    const daily = this.ensureDaily();
+    const taskSummary = dailyTasks(daily.date).map((t) => {
+      const prog = daily.tasks[t.id] ?? 0;
+      return `${t.desc}（${Math.min(prog, t.target)}/${t.target}）`;
+    });
+    const bagDanger = this.bag.reduce((s, sl) => s + (sl.danger ?? 0), 0);
+    return {
+      saveNow: Math.round(this.loadValue),
+      expectedLossPct: Math.round(lossPct * 100),
+      expectedLossValue: Math.round(this.loadValue * lossPct),
+      nextMilestone: this.nextMilestone(),
+      taskSummary,
+      bagDanger: Math.round(bagDanger * 100) / 100,
+    };
+  }
+
+  private nextMilestone(): { depth: number; name: string } | null {
+    const cand: Array<[number, string]> = [];
+    for (const cp of [100, 300, 600, 1000]) if (cp > this.depth) cand.push([cp, `升降机检查点 ${cp}m`]);
+    for (const b of [500, 950]) if (b > this.depth) cand.push([b, `区域 Boss ${b}m`]);
+    const mod = Math.floor(this.depth / 100) * 100 + 50;
+    if (mod > this.depth) cand.push([mod, `补给站 ${mod}m`]);
+    if (!cand.length) return null;
+    cand.sort((a, b) => a[0] - b[0]);
+    return { depth: cand[0][0], name: cand[0][1] };
+  }
+
+  private buildNodePreview(l: Layer): Array<{ name: string; riskLabel: string; rewardLabel: string }> {
+    if (!this.echoLens && !this.revealQualityAuto && this.save.upgrades.detection < 5) return [];
+    const out: Array<{ name: string; riskLabel: string; rewardLabel: string }> = [];
+    const rng = mulberry32(l.index * 99991 + 7);
+    for (let i = 1; i <= 3; i++) {
+      const d = this.depth + i * 10;
+      if (d > 1000) break;
+      const nl = generateLayer(d, { rng });
+      let name = `${d}m`;
+      if (d === 500 || d === 950) name = `⚠ Boss ${d}m`;
+      else if (d % 30 === 0) name = `分岔路 ${d}m`;
+      else if (d % 100 === 50) name = `补给站 ${d}m`;
+      else if (CHECKPOINTS.includes(d)) name = `检查点 ${d}m`;
+      out.push({ name, riskLabel: riskLabel(nl.collapseRisk), rewardLabel: VEIN_NAME[nl.quality] });
+    }
+    return out;
+  }
+
   private buildSnapshot(): UiSnapshot {
     const l = this.layer;
     return {
@@ -1408,6 +2182,17 @@ export class MinerGame {
       difficulty: this.difficulty,
       wearPenalty: Math.round(this.wearPenalty * 100) / 100,
       buffs: [...this.buffs],
+      archetype: this.archetype,
+      challenge: [...this.challenge],
+      revealLevel: this.revealLevel,
+      routes: this.routeOptions?.map((r) => ({ ...r })) ?? null,
+      room: this.roomView ? { ...this.roomView, options: this.roomView.options.map((o) => ({ ...o })) } : null,
+      moduleChoice: this.moduleOptions?.map((m) => ({ ...m })) ?? null,
+      base: this.baseView ? { ...this.baseView, needOre: this.baseView.needOre ? { ...this.baseView.needOre } : null, options: this.baseView.options.map((o) => ({ ...o })) } : null,
+      boss: this.buildBossView(),
+      evac: this.buildEvac(),
+      riskRange: this.buildRiskRange(),
+      cautiousCooldown: this.cautiousCooldown,
       canBlackMarket: this.canBlackMarket,
       blackmarket: this.phase === "blackmarket" ? this.buildBmView() : null,
       layer: l ? {
@@ -1416,11 +2201,12 @@ export class MinerGame {
         qualityText: VEIN_NAME[l.quality],
         hazardText: l.hazard ? hazardName(l.hazard) : null,
         collapseRiskLabel: riskLabel(l.collapseRisk),
-        revealed: !!l.revealed,
+        revealed: this.revealLevel,
         anomalyEffect: l.anomalyEffect,
         milkingAvailable: this.canMilk(),
         milkCount: this.milkCount,
         stage: l.stage,
+        nodePreview: this.buildNodePreview(l),
       } : null,
       result: this.phase === "result" || this.phase === "blackmarket" || this.phase === "bandit" ? this.lastResult : null,
       hazard: this.phase === "hazard" ? { type: "creature", severity: this.hazardSeverity } : null,
@@ -1428,9 +2214,9 @@ export class MinerGame {
       bandit: this.phase === "bandit" ? { severity: this.banditSeverity, pocket: Math.round(this.pocket) } : null,
       gameover: this.phase === "gameover" ? this.gameoverInfo : null,
       surfaced: this.phase === "surfaced" ? this.surfacedInfo : null,
-      retreatBlocked: this.retreatBlocked > 0,
+      retreatBlocked: this.retreatBlocked,
       log: [...this.log],
-      drilling: this.phase === "drilling" ? { progress: this.drillProgress, mode: this.drillMode, hardness: l?.hardness ?? 1 } : null,
+      drilling: this.phase === "drilling" ? { progress: this.drillProgress, mode: this.drillMode, hardness: l?.hardness ?? 1, heat: this.drillHeat, canStop: this.canStopDrill() } : null,
       canDrill: this.power > 0,
     };
   }

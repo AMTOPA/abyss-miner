@@ -1,11 +1,12 @@
-// ---------- WebAudio 合成音效引擎（零素材文件） ----------
+﻿// ---------- WebAudio 合成音效引擎（零素材文件） ----------
 // 打磨目标：更饱满的钻机轰鸣、清脆矿石拾取、压迫感警报/灾难、
 // 悠远氛围底噪、有质感的 UI 反馈，并利用 detune / StereoPanner 拓宽声场。
 
-type SfxName =
+export type SfxName =
   | "click" | "hover" | "drill" | "drillStop" | "ore" | "combo" | "warning"
   | "accident" | "disaster" | "success" | "retreat" | "detector" | "support"
-  | "milking" | "megaShield" | "powerLow" | "creature" | "anomaly" | "ambient";
+  | "milking" | "megaShield" | "powerLow" | "creature" | "anomaly" | "ambient"
+  | "roomDiscover" | "moduleSelect" | "boss" | "evacWindow";
 
 interface ToneOpts {
   type?: OscillatorType;
@@ -398,6 +399,35 @@ export class AudioEngine {
         this.noise({ dur: 0.16, vol: v(0.04), f0: 8000, f1: 5000, type: "bandpass", Q: 1, delay: end });
         break;
       }
+      case "roomDiscover":
+        // 房间发现：门锁弹开、短促空间扫描与远处金属回声。
+        this.noise({ dur: 0.07, vol: v(0.08), f0: 2100, f1: 620, type: "bandpass", Q: 1.8, attack: 0.002, pan: -0.18 });
+        this.tone({ type: "square", f0: 210, f1: 150, dur: 0.08, vol: v(0.08), delay: 0.025, pan: -0.12 });
+        this.tone({ type: "sine", f0: 480, f1: 920, dur: 0.32, vol: v(0.1), delay: 0.08, glide: "linear", pan: 0.18, harmonics: [2.03] });
+        this.tone({ type: "sine", f0: 920, f1: 610, dur: 0.38, vol: v(0.045), delay: 0.28, pan: -0.28 });
+        break;
+      case "moduleSelect":
+        // 模组选择：插槽咔哒 + 两级确认音，强调“装配完成”。
+        this.noise({ dur: 0.026, vol: v(0.08), f0: 4800, f1: 1800, type: "bandpass", Q: 1.5, attack: 0.001 });
+        this.tone({ type: "square", f0: 180, f1: 120, dur: 0.055, vol: v(0.07), delay: 0.015 });
+        this.tone({ type: "triangle", f0: 523.25, dur: 0.14, vol: v(0.09), delay: 0.055, pan: -0.12 });
+        this.tone({ type: "triangle", f0: 783.99, dur: 0.2, vol: v(0.1), delay: 0.13, pan: 0.12, harmonics: [2] });
+        break;
+      case "boss":
+        // Boss 现身：重型汽笛、低频冲击和缓慢金属刮擦。
+        this.tone({ type: "sine", f0: 88, f1: 34, dur: 1.05, vol: v(0.38), attack: 0.015 });
+        this.tone({ type: "sawtooth", f0: 138, f1: 72, dur: 0.82, vol: v(0.16), attack: 0.08, detune: -24 });
+        this.tone({ type: "sawtooth", f0: 136, f1: 70, dur: 0.82, vol: v(0.14), attack: 0.08, detune: 27, delay: 0.025 });
+        this.noise({ dur: 0.95, vol: v(0.19), f0: 980, f1: 90, type: "lowpass", attack: 0.26 });
+        this.noise({ dur: 0.48, vol: v(0.075), f0: 3200, f1: 500, type: "bandpass", Q: 2.2, delay: 0.36, pan: 0.24 });
+        break;
+      case "evacWindow":
+        // 模组选择：插槽咔哒 + 两级确认音，强调“装配完成”。????
+        this.noise({ dur: 0.32, vol: v(0.075), f0: 1400, f1: 260, type: "bandpass", Q: 1.1, attack: 0.06, pan: -0.2 });
+        this.tone({ type: "triangle", f0: 659.25, f1: 622.25, dur: 0.2, vol: v(0.1), delay: 0.04, pan: -0.12 });
+        this.tone({ type: "triangle", f0: 880, f1: 830.61, dur: 0.26, vol: v(0.11), delay: 0.22, pan: 0.12, harmonics: [2] });
+        this.tone({ type: "sine", f0: 110, f1: 72, dur: 0.34, vol: v(0.07), delay: 0.18 });
+        break;
       case "retreat":
         // 上行呼啸：逃生感
         this.noise({ dur: 0.7, vol: v(0.18), f0: 220, f1: 2400, type: "bandpass", Q: 1.4, attack: 0.08 });

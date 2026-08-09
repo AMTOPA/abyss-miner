@@ -1,6 +1,9 @@
 import { ORES, OreId, StageId, STAGES, baseOreValue, stageForDepth } from "./config";
 import type { OreQuality } from "./items";
 
+// v4：所有随机生成支持注入 rng（本局种子可复现；默认 Math.random）
+export type Rng = () => number;
+
 export type VeinQuality = "barren" | "normal" | "rich" | "legendary";
 
 export const VEIN_MULT: Record<VeinQuality, number> = {
@@ -37,8 +40,6 @@ export type Layer = {
 };
 
 // ---------- v2：层品质决定矿石品质分布 ----------
-// 层品质不再乘价值倍率，而是决定掉落矿石的 4 品质权重：
-// barren 偏劣质 → normal 均衡 → rich 多优良 → legendary 优良/传奇为主
 export const QUALITY_DIST: Record<VeinQuality, Array<[OreQuality, number]>> = {
   barren:    [["poor", 9], ["normal", 1]],
   normal:    [["poor", 2], ["normal", 6], ["fine", 2]],
@@ -53,9 +54,9 @@ const QUALITY_WEIGHTS: Array<[VeinQuality, number]> = [
   ["barren", 3],
 ];
 
-function pickWeighted<T>(entries: Array<[T, number]>): T {
+function pickWeighted<T>(entries: Array<[T, number]>, rng: Rng): T {
   const total = entries.reduce((s, [, w]) => s + w, 0);
-  let r = Math.random() * total;
+  let r = rng() * total;
   for (const [v, w] of entries) {
     r -= w;
     if (r <= 0) return v;
@@ -63,8 +64,8 @@ function pickWeighted<T>(entries: Array<[T, number]>): T {
   return entries[0][0];
 }
 
-export function pickQuality(vein: VeinQuality): OreQuality {
-  return pickWeighted(QUALITY_DIST[vein]);
+export function pickQuality(vein: VeinQuality, rng: Rng = Math.random): OreQuality {
+  return pickWeighted(QUALITY_DIST[vein], rng);
 }
 
 // 品质提升一档（qualityBonus 触发时使用），传奇封顶
@@ -74,7 +75,7 @@ export function upgradeQuality(q: OreQuality): OreQuality {
   return order[Math.min(order.length - 1, i + 1)];
 }
 
-function qualityForDepth(depth: number): VeinQuality {
+function qualityForDepth(depth: number, rng: Rng): VeinQuality {
   const deep = depth / 1000;
   const w: Array<[VeinQuality, number]> = [
     ["legendary", Math.min(14, 0.5 + deep * 14)],
@@ -82,29 +83,24 @@ function qualityForDepth(depth: number): VeinQuality {
     ["normal", 42 - deep * 8],
     ["barren", Math.max(12, 40 - deep * 30)],
   ];
-  return pickWeighted(w);
+  return pickWeighted(w, rng);
 }
 
-function hardnessForDepth(depth: number): number {
+function hardnessForDepth(depth: number, rng: Rng): number {
   const base = 1 + (depth / 1000) * 3.2;
-  const jitter = (Math.random() - 0.5) * 0.8;
+  const jitter = (rng() - 0.5) * 0.8;
   return Math.max(1, Math.min(5, Math.round(base + jitter)));
 }
 
-function instabilityFor(depth: number, quality: VeinQuality): number {
+function instabilityFor(depth: number, quality: VeinQuality, rng: Rng): number {
   let v = 0.04 + (depth / 1000) * 0.3;
   if (quality === "rich") v += 0.07;
   if (quality === "legendary") v += 0.14;
-  v += (Math.random() - 0.5) * 0.06;
+  v += (rng() - 0.5) * 0.06;
   return Math.max(0.02, Math.min(0.85, v));
 }
 
-// 超载钻进专用矿池：提升稀有矿权重（引擎在选择超载模式时调用）
-export function overloadOrePool(depth: number): OreId[] {
-  return orePoolForDepth(depth, true);
-}
-
-function orePoolForDepth(depth: number, overload: boolean): OreId[] {
+function orePoolForDepth(depth: number, overload: boolean, rng: Rng): OreId[] {
   const pool: OreId[] = [];
   const add = (id: OreId, w: number) => {
     if (depth >= ORES[id].minDepth) for (let i = 0; i < w; i++) pool.push(id);
@@ -120,13 +116,18 @@ function orePoolForDepth(depth: number, overload: boolean): OreId[] {
   // 超载钻进提升稀有矿权重
   if (overload) {
     const rares = pool.filter((o) => ORES[o].weight >= 5);
-    for (let i = 0; i < rares.length && i < 3; i++) pool.push(rares[Math.floor(Math.random() * rares.length)]);
+    for (let i = 0; i < rares.length && i < 3; i++) pool.push(rares[Math.floor(rng() * rares.length)]);
   }
   return pool.length ? pool : ["copper"];
 }
 
-function hazardForDepth(depth: number, stage: StageId): { hazard: HazardId | null; severity: number } {
-  const r = Math.random();
+// 超载钻进专用矿池：提升稀有矿权重（引擎在选择超载模式时调用）
+export function overloadOrePool(depth: number, rng: Rng = Math.random): OreId[] {
+  return orePoolForDepth(depth, true, rng);
+}
+
+function hazardForDepth(depth: number, stage: StageId, rng: Rng): { hazard: HazardId | null; severity: number } {
+  const r = rng();
   if (stage === "shallow") return { hazard: null, severity: 1 };
   if (stage === "oldmine") {
     if (r < 0.22) return { hazard: "gas", severity: r < 0.12 ? 2 : 1 };
@@ -145,7 +146,7 @@ function hazardForDepth(depth: number, stage: StageId): { hazard: HazardId | nul
   return { hazard: null, severity: 1 };
 }
 
-function collapseRiskLabel(risk: number): string {
+export function collapseRiskLabel(risk: number): string {
   if (risk < 0.08) return "极低";
   if (risk < 0.16) return "低";
   if (risk < 0.28) return "中";
@@ -163,8 +164,8 @@ function rockSignal(hardness: number, quality: VeinQuality): string {
   return `岩质：${h}`;
 }
 
-function veinSignal(quality: VeinQuality, noisy: boolean): string {
-  const shifted = noisy ? (Math.random() < 0.3 ? shiftQuality(quality) : quality) : quality;
+function veinSignal(quality: VeinQuality, noisy: boolean, rng: Rng): string {
+  const shifted = noisy ? (rng() < 0.3 ? shiftQuality(quality, rng) : quality) : quality;
   switch (shifted) {
     case "legendary":
       return "探测器传来异常强烈的脉动信号";
@@ -178,10 +179,10 @@ function veinSignal(quality: VeinQuality, noisy: boolean): string {
   }
 }
 
-function shiftQuality(q: VeinQuality): VeinQuality {
+function shiftQuality(q: VeinQuality, rng: Rng): VeinQuality {
   const order: VeinQuality[] = ["barren", "normal", "rich", "legendary"];
   const i = order.indexOf(q);
-  const delta = Math.random() < 0.5 ? -1 : 1;
+  const delta = rng() < 0.5 ? -1 : 1;
   return order[Math.max(0, Math.min(order.length - 1, i + delta))];
 }
 
@@ -218,27 +219,30 @@ function envSignal(stage: StageId, hazard: HazardId | null): string {
   }
 }
 
-export function generateLayer(depth: number, opts: { overloadHint?: boolean; accuracy?: number } = {}): Layer {
+export type GenerateLayerOpts = { overloadHint?: boolean; accuracy?: number; rng?: Rng };
+
+export function generateLayer(depth: number, opts: GenerateLayerOpts = {}): Layer {
+  const rng = opts.rng ?? Math.random;
   const index = Math.floor(depth / 10);
   const stage = stageForDepth(depth);
-  const quality = qualityForDepth(depth);
-  const hardness = hardnessForDepth(depth);
-  const instability = instabilityFor(depth, quality);
-  const { hazard, severity } = hazardForDepth(depth, stage);
-  const ores = orePoolForDepth(depth, opts.overloadHint ?? false);
+  const quality = qualityForDepth(depth, rng);
+  const hardness = hardnessForDepth(depth, rng);
+  const instability = instabilityFor(depth, quality, rng);
+  const { hazard, severity } = hazardForDepth(depth, stage, rng);
+  const ores = orePoolForDepth(depth, opts.overloadHint ?? false, rng);
   const collapseRisk = Math.min(0.9, instability);
 
   const accuracy = opts.accuracy ?? 0.7;
-  const noisy = Math.random() > accuracy;
+  const noisy = rng() > accuracy;
   const signals: string[] = [];
   signals.push(rockSignal(hardness, quality));
-  signals.push(veinSignal(quality, noisy));
-  signals.push(dangerSignal(noisy && Math.random() < 0.25 ? Math.min(0.85, instability + 0.15) : instability));
+  signals.push(veinSignal(quality, noisy, rng));
+  signals.push(dangerSignal(noisy && rng() < 0.25 ? Math.min(0.85, instability + 0.15) : instability));
   signals.push(envSignal(stage, hazard));
 
   let anomalyEffect: string | null = null;
   if (hazard === "anomaly") {
-    anomalyEffect = pickAnomalyEffect();
+    anomalyEffect = pickAnomalyEffect(rng);
   }
 
   return {
@@ -248,7 +252,7 @@ export function generateLayer(depth: number, opts: { overloadHint?: boolean; acc
   };
 }
 
-export function pickAnomalyEffect(): string {
+export function pickAnomalyEffect(rng: Rng = Math.random): string {
   const effects = [
     "探测干扰：本层探测器失灵，无法获取信息",
     "双倍法则：本层收益 ×2，但本轮灾难损失也 ×2",
@@ -257,30 +261,33 @@ export function pickAnomalyEffect(): string {
     "深渊回响：下一层信息将完全透明",
     "重力紊乱：本层超载钻进不再增加危险",
   ];
-  return effects[Math.floor(Math.random() * effects.length)];
+  return effects[Math.floor(rng() * effects.length)];
 }
 
-export function layerAmount(quality: VeinQuality): number {
+export function layerAmount(quality: VeinQuality, rng: Rng = Math.random): number {
   switch (quality) {
-    case "barren": return 2 + Math.floor(Math.random() * 2);
-    case "normal": return 3 + Math.floor(Math.random() * 3);
-    case "rich": return 5 + Math.floor(Math.random() * 4);
-    case "legendary": return 7 + Math.floor(Math.random() * 4);
+    case "barren": return 2 + Math.floor(rng() * 2);
+    case "normal": return 3 + Math.floor(rng() * 3);
+    case "rich": return 5 + Math.floor(rng() * 4);
+    case "legendary": return 7 + Math.floor(rng() * 4);
   }
 }
 
-export function pickOre(pool: OreId[]): OreId {
-  return pool[Math.floor(Math.random() * pool.length)];
+export function pickOre(pool: OreId[], rng: Rng = Math.random): OreId {
+  return pool[Math.floor(rng() * pool.length)];
 }
 
 // v2：单矿产出（含品质）。数量倍率（mode/combo/难度/损耗）由引擎按产出聚合。
 export type OreYield = { id: OreId; quality: OreQuality };
 
-export function rollOreYield(depth: number, pool: OreId[], quality: VeinQuality, countOverride?: number): OreYield[] {
-  const count = countOverride ?? layerAmount(quality);
+export function rollOreYield(
+  depth: number, pool: OreId[], quality: VeinQuality,
+  countOverride?: number, rng: Rng = Math.random
+): OreYield[] {
+  const count = countOverride ?? layerAmount(quality, rng);
   const out: OreYield[] = [];
   for (let i = 0; i < count; i++) {
-    out.push({ id: pickOre(pool), quality: pickQuality(quality) });
+    out.push({ id: pickOre(pool, rng), quality: pickQuality(quality, rng) });
   }
   return out;
 }

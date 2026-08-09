@@ -4,20 +4,20 @@ import { normalizeSave } from "../src/game/save";
 import { makeEquipmentInstance, oreUnitValue, scaleStats } from "../src/game/items";
 import { overloadOrePool } from "../src/game/world";
 
-describe("存档迁移与校验（v1/v2 -> v3）", () => {
+describe("存档迁移与校验（v1/v2 -> v4）", () => {
   it("v2 矿石 record 迁移为锁定单价的堆", () => {
     const save = normalizeSave({
       version: 2,
       warehouseOres: { "copper:normal": 20, "silver:fine": 5 },
     });
-    expect(save.version).toBe(3);
+    expect(save.version).toBe(4);
     expect(save.warehouseStacks.length).toBe(2);
     const copper = save.warehouseStacks.find((s) => s.key === "copper:normal");
     expect(copper?.count).toBe(20);
     expect((copper?.unitValue ?? 0)).toBeGreaterThan(0);
   });
 
-  it("v2 矿石堆单价不随历史最深纪录变化", () => {
+  it("v2 矿石堆单价不随历史最深深度变化", () => {
     const save = normalizeSave({ warehouseOres: { "copper:normal": 20 } });
     const unit1 = save.warehouseStacks[0].unitValue;
     const save2 = normalizeSave({
@@ -31,7 +31,7 @@ describe("存档迁移与校验（v1/v2 -> v3）", () => {
     const save = normalizeSave({ cash: -500, upgrades: { drill: 99 } });
     expect(save.cash).toBe(0);
     expect(save.upgrades.drill).toBe(12);
-    expect(save.version).toBe(3);
+    expect(save.version).toBe(4);
   });
 
   it("v2 装备（无 stats）迁移时按 tier 补齐缩放属性", () => {
@@ -47,8 +47,10 @@ describe("存档迁移与校验（v1/v2 -> v3）", () => {
   it("defaultSave 结构完整", () => {
     const s = defaultSave();
     expect(s.warehouseStacks).toEqual([]);
-    expect(s.version).toBe(3);
+    expect(s.version).toBe(4);
     expect(s.settings.reduceMotion).toBe(false);
+    expect(s.archetypesUnlocked).toEqual([]);
+    expect(s.codex.minerals).toEqual({});
   });
 });
 
@@ -71,7 +73,7 @@ describe("装备 tier 缩放", () => {
   });
 });
 
-describe("矿石估值口径", () => {
+describe("矿石估价口径", () => {
   it("同一矿石在同一深度价值稳定", () => {
     expect(oreUnitValue(300, "copper", "normal")).toBe(oreUnitValue(300, "copper", "normal"));
   });

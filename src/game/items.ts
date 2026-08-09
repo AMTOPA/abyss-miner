@@ -1,6 +1,7 @@
 ﻿// ---------- v2 物品/品质/难度/黑市数据模型 ----------
 import { ORES, baseOreValue } from "./config";
 import type { OreId } from "./config";
+import type { TraitId } from "./content";
 
 // ================= 矿石品质 =================
 
@@ -120,7 +121,7 @@ export type EquipmentInstance = {
 
 export type ItemKind = "consumable" | "equipment";
 
-export type ConsumableEffect = "repair" | "fuel" | "shield" | "purify" | "pierce";
+export type ConsumableEffect = "repair" | "repair_plus" | "fuel" | "shield" | "purify" | "pierce";
 
 export type ItemDef = {
   id: string;
@@ -134,6 +135,7 @@ export type ItemDef = {
   tier?: ItemTier;
   stats?: Partial<EquipmentStats>;
   effect?: ConsumableEffect;
+  trait?: TraitId;   // v4：规则型装备特性（改变玩法而非仅数值）
 };
 
 export const CONSUMABLES: Record<string, ItemDef> = {
@@ -142,6 +144,7 @@ export const CONSUMABLES: Record<string, ItemDef> = {
   shield_pot: { id: "shield_pot", name: "应急护盾", icon: "🛡️", kind: "consumable", desc: "抵挡一次灾难", basePrice: 80, color: "#5fc98f", effect: "shield" },
   purifier:   { id: "purifier",   name: "深渊净化剂", icon: "🧪", kind: "consumable", desc: "本局免疫毒气", basePrice: 55, color: "#7cc4ff", effect: "purify" },
   dynamite:   { id: "dynamite",   name: "震波炸药", icon: "💣", kind: "consumable", desc: "本局穿透概率 +8%", basePrice: 70, color: "#ff8c42", effect: "pierce" },
+  repair_kit_plus: { id: "repair_kit_plus", name: "高级维修套件", icon: "🛠️", kind: "consumable", desc: "恢复 100% 钻机耐久", basePrice: 260, color: "#c77dff", effect: "repair_plus" },
 };
 
 const TIER_COLORS: Record<ItemTier, string> = { 1: "#9aa5b1", 2: "#ffd166", 3: "#c77dff" };
@@ -161,32 +164,34 @@ function equipDesc(slot: EquipmentSlot, tier: ItemTier, stats: Partial<Equipment
 }
 
 function equip(
-  id: string, name: string, icon: string, slot: EquipmentSlot, tier: ItemTier, stats: Partial<EquipmentStats>, basePrice: number
+  id: string, name: string, icon: string, slot: EquipmentSlot, tier: ItemTier,
+  stats: Partial<EquipmentStats>, basePrice: number, trait?: TraitId
 ): ItemDef {
-  return { id, name, icon, kind: "equipment", desc: equipDesc(slot, tier, stats), basePrice, color: TIER_COLORS[tier], slot, tier, stats };
+  const extra = trait ? " · 特性：「" + trait + "」" : "";
+  return { id, name, icon, kind: "equipment", desc: equipDesc(slot, tier, stats) + extra, basePrice, color: TIER_COLORS[tier], slot, tier, stats, trait };
 }
 
 export const EQUIPMENT_DEFS: Record<string, ItemDef> = {
   // 钻头
   drill_bit_1: equip("drill_bit_1", "钢制钻头", "🔩", "drill", 1, { qualityBonus: 5, valueBonus: 3 }, 220),
-  drill_bit_2: equip("drill_bit_2", "合金钻头", "⚙️", "drill", 2, { qualityBonus: 10, valueBonus: 6, pierceBonus: 1 }, 520),
-  drill_bit_3: equip("drill_bit_3", "深渊金刚钻", "💠", "drill", 3, { qualityBonus: 18, valueBonus: 12, pierceBonus: 2 }, 1280),
+  drill_bit_2: equip("drill_bit_2", "合金钻头", "⚙️", "drill", 2, { qualityBonus: 10, valueBonus: 6, pierceBonus: 1 }, 520, "vent_cool"),
+  drill_bit_3: equip("drill_bit_3", "深渊金刚钻", "💠", "drill", 3, { qualityBonus: 18, valueBonus: 12, pierceBonus: 2 }, 1280, "molten_heart"),
   // 背包
   pack_1: equip("pack_1", "扩容背包", "🎒", "pack", 1, { slotBonus: 2 }, 260),
-  pack_2: equip("pack_2", "战术背包", "🧳", "pack", 2, { slotBonus: 4 }, 620),
-  pack_3: equip("pack_3", "深渊货仓", "📦", "pack", 3, { slotBonus: 7 }, 1500),
+  pack_2: equip("pack_2", "战术背包", "🧳", "pack", 2, { slotBonus: 4 }, 620, "pocket_dim"),
+  pack_3: equip("pack_3", "深渊货仓", "📦", "pack", 3, { slotBonus: 7 }, 1500, "magnet"),
   // 护甲
   armor_1: equip("armor_1", "加固护板", "🛡️", "armor", 1, { wearReduce: 10 }, 240),
-  armor_2: equip("armor_2", "复合装甲", "🦺", "armor", 2, { wearReduce: 20 }, 580),
-  armor_3: equip("armor_3", "深渊战甲", "🥋", "armor", 3, { wearReduce: 32 }, 1400),
+  armor_2: equip("armor_2", "复合装甲", "🦺", "armor", 2, { wearReduce: 20 }, 580, "scrap_armor"),
+  armor_3: equip("armor_3", "深渊战甲", "🥋", "armor", 3, { wearReduce: 32 }, 1400, "ice_core"),
   // 探测镜
   detector_1: equip("detector_1", "声呐探头", "📡", "detector", 1, { detectorBonus: 1, accuracyBonus: 5 }, 230),
-  detector_2: equip("detector_2", "穿墙雷达", "🛰️", "detector", 2, { detectorBonus: 1, accuracyBonus: 10 }, 560),
-  detector_3: equip("detector_3", "深渊之眼", "👁️", "detector", 3, { detectorBonus: 2, accuracyBonus: 18 }, 1350),
+  detector_2: equip("detector_2", "穿墙雷达", "🛰️", "detector", 2, { detectorBonus: 1, accuracyBonus: 10 }, 560, "echo_lens"),
+  detector_3: equip("detector_3", "深渊之眼", "👁️", "detector", 3, { detectorBonus: 2, accuracyBonus: 18 }, 1350, "deep_sight"),
   // 护符
   charm_1: equip("charm_1", "平安符", "🧿", "charm", 1, { banditReduce: 15, anomalyResist: 10 }, 210),
-  charm_2: equip("charm_2", "夜枭徽记", "🦉", "charm", 2, { banditReduce: 30, anomalyResist: 20 }, 520),
-  charm_3: equip("charm_3", "深渊圣印", "🔯", "charm", 3, { banditReduce: 50, anomalyResist: 35 }, 1300),
+  charm_2: equip("charm_2", "夜枭徽记", "🦉", "charm", 2, { banditReduce: 30, anomalyResist: 20 }, 520, "lure_pouch"),
+  charm_3: equip("charm_3", "深渊圣印", "🔯", "charm", 3, { banditReduce: 50, anomalyResist: 35 }, 1300, "rich_blood"),
 };
 
 export const EQUIPMENT_IDS: string[] = Object.keys(EQUIPMENT_DEFS);
