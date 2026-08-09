@@ -2511,6 +2511,7 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
   font-size: 10px;
   white-space: nowrap;
 }
+.topbar-bag-summary.guard-chip { border-color: rgba(110, 231, 183, 0.45); color: #6ee7b7; background: rgba(8, 26, 18, 0.85); }
 .node-preview-panel { width: min(360px, 100%); padding: 13px; }
 .node-preview-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .node-preview-card,

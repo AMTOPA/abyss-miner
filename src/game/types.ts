@@ -186,6 +186,7 @@ export type UiSnapshot = {
   overheat: number;
   combo: number;
   supports: number;
+  disasterGuard: number;              // v5：应急锚点剩余保护层数（0 = 未激活）
   detectors: number;
   slots: number;                // 总格子数
   usedSlots: number;            // 已用格子

@@ -93,7 +93,8 @@ function hardnessForDepth(depth: number, rng: Rng): number {
 }
 
 function instabilityFor(depth: number, quality: VeinQuality, rng: Rng): number {
-  let v = 0.04 + (depth / 1000) * 0.3;
+  // v5 平衡：深层塌方基数 0.3 -> 0.22（深潜灾难率整体约减半，浅层几乎不变）
+  let v = 0.04 + (depth / 1000) * 0.22;
   if (quality === "rich") v += 0.07;
   if (quality === "legendary") v += 0.14;
   v += (rng() - 0.5) * 0.06;

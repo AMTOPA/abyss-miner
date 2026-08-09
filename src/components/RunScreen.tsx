@@ -176,6 +176,7 @@ export default function RunScreen(props: Props) {
           </span>
           {snap.wearPenalty > 0 && <span className="wear-warning">⚠️ 损耗 -{displayPercent(snap.wearPenalty)}</span>}
           <span className="topbar-bag-summary">🎒 {snap.usedSlots}/{snap.slots} · {fmt(snap.load)}</span>
+          {snap.disasterGuard > 0 && <span className="topbar-bag-summary guard-chip" title="应急锚点生效中：灾难事故将降级为严重事故，剩余保护距离">⚓ 锚点保护 {snap.disasterGuard * 10}m</span>}
           {activeChallenges.length > 0 && <span className="challenge-summary" title={activeChallenges.map((id) => CHALLENGE_NAMES[id]).join("、")}>词缀 ×{activeChallenges.length}</span>}
         </div>}
       </header>

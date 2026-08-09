@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { defaultSave } from "../src/game/config";
 import { normalizeSave } from "../src/game/save";
-import { makeEquipmentInstance, oreUnitValue, scaleStats } from "../src/game/items";
+import { CONSUMABLES, makeEquipmentInstance, oreUnitValue, scaleStats } from "../src/game/items";
 import { overloadOrePool } from "../src/game/world";
 
 describe("存档迁移与校验（v1/v2 -> v4）", () => {
@@ -84,6 +84,21 @@ describe("矿石估价口径", () => {
     const fine = oreUnitValue(100, "copper", "fine");
     const legend = oreUnitValue(100, "copper", "legendary");
     expect(poor < normal && normal < fine && fine < legend).toBe(true);
+  });
+});
+
+describe("v5 灾难平衡与应急锚点", () => {
+  it("应急锚点是可用消耗品，效果为灾难降级（50m 保护）", () => {
+    const def = CONSUMABLES["disaster_guard"];
+    expect(def).toBeDefined();
+    expect(def.effect).toBe("disaster_guard");
+    expect(def.basePrice).toBeGreaterThan(0);
+    expect(def.desc).toContain("50m");
+  });
+
+  it("原有消耗品未受影响", () => {
+    expect(CONSUMABLES["shield_pot"].effect).toBe("shield");
+    expect(CONSUMABLES["repair_kit_plus"].effect).toBe("repair_plus");
   });
 });
 

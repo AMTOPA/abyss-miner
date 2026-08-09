@@ -107,6 +107,7 @@ export class MinerGame {
   private buffs: BuffId[] = [];
   private gasImmune = false;
   private shieldActive = false;
+  private disasterGuardLayers = 0; // v5：应急锚点剩余保护层数（50m = 5 层）
   private pierceBuff = 0;
   private qualityBonus = 0;
   private valueBonus = 0;
@@ -261,6 +262,7 @@ export class MinerGame {
     this.anomalyDoubleLoss = false;
     this.detectorDisabled = false;
     this.megaShieldUsed = false;
+    this.disasterGuardLayers = 0;
     this.nextTransparent = false;
     this.runEnded = false;
     this.minedThisRun = 0;
@@ -475,6 +477,10 @@ export class MinerGame {
       case "pierce":
         this.pierceBuff += 8;
         this.logAdd(`${def.name}：穿透概率 +8%`, "good");
+        break;
+      case "disaster_guard":
+        this.disasterGuardLayers = 5; // 50m = 5 层
+        this.logAdd("应急锚点展开：接下来 50m 内灾难事故降级为严重事故", "good");
         break;
     }
     this.bag.splice(idx, 1);
@@ -969,6 +975,7 @@ export class MinerGame {
     this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
     this.cautiousCooldown = Math.max(0, this.cautiousCooldown - 1);
     this.creatureImmune = Math.max(0, this.creatureImmune - 1);
+    this.disasterGuardLayers = Math.max(0, this.disasterGuardLayers - 1);
     if (this.routeBuff && --this.routeBuff.layersLeft <= 0) this.routeBuff = null;
     this.milkCount = 0;
     this.supportsUsedThisLayer = false;
@@ -1444,7 +1451,8 @@ export class MinerGame {
     const l = this.layer;
     if (!l) return 0.05;
     const ss = supportStats(this.save.upgrades.support);
-    let risk = l.collapseRisk * (1 - 0.03 * this.save.upgrades.safety);
+    // v5 平衡：安全装备每级削减 5% 塌方风险（原 3%），满配 12 级可压至 40%
+    let risk = l.collapseRisk * Math.max(0.15, 1 - 0.05 * this.save.upgrades.safety);
     risk *= useSupport ? ss.effect : 1;
     risk *= 1 + this.overheat * 0.004;
     const r = this.slotRatio();
@@ -1458,8 +1466,11 @@ export class MinerGame {
   private rollSeverity(risk: number): "minor" | "severe" | "disaster" {
     const r = this.rnd();
     const severeThresh = 0.62 - risk * 0.25;
-    const disasterThresh = 0.9 - risk * 0.25;
-    if (r > disasterThresh) return "disaster";
+    // v5 平衡：灾难基础概率 10% -> 3%（正常路径整体约减半）；
+    // 深渊深处存在最低灾难威胁，满配也无法完全规避（1000m 满配约 30%）
+    const depthFloor = 0.02 + (this.depth / 1000) * 0.05;
+    const disasterP = Math.max(0.03 + risk * 0.25, depthFloor);
+    if (r > 1 - disasterP) return "disaster";
     if (r > severeThresh) return "severe";
     return "minor";
   }
@@ -1484,6 +1495,12 @@ export class MinerGame {
       this.flashColor = "#ff5522";
       this.audio.play("accident");
       this.logAdd(`严重事故！损失 ${fmt(lost)} 矿石，退回上一层`, "bad");
+      return;
+    }
+    if (this.disasterGuardLayers > 0) {
+      this.audio.play("megaShield");
+      this.logAdd("应急锚点撑住了岩层！灾难事故降级为严重事故", "good");
+      this.applyAccident("severe");
       return;
     }
     const ss = supportStats(this.save.upgrades.support);
@@ -2173,6 +2190,7 @@ export class MinerGame {
       overheat: Math.round(this.overheat),
       combo: Math.round(this.combo * 100) / 100,
       supports: this.supports,
+      disasterGuard: this.disasterGuardLayers,
       detectors: this.detectors,
       slots: this.slots,
       usedSlots: this.usedSlots(),

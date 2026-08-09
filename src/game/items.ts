@@ -121,7 +121,7 @@ export type EquipmentInstance = {
 
 export type ItemKind = "consumable" | "equipment";
 
-export type ConsumableEffect = "repair" | "repair_plus" | "fuel" | "shield" | "purify" | "pierce";
+export type ConsumableEffect = "repair" | "repair_plus" | "fuel" | "shield" | "purify" | "pierce" | "disaster_guard";
 
 export type ItemDef = {
   id: string;
@@ -142,6 +142,7 @@ export const CONSUMABLES: Record<string, ItemDef> = {
   repair_kit: { id: "repair_kit", name: "维修套件", icon: "🔧", kind: "consumable", desc: "恢复 40% 钻机耐久", basePrice: 60, color: "#e08a45", effect: "repair" },
   fuel_cell:  { id: "fuel_cell",  name: "应急燃料", icon: "⛽", kind: "consumable", desc: "电量 +40", basePrice: 45, color: "#ffd166", effect: "fuel" },
   shield_pot: { id: "shield_pot", name: "应急护盾", icon: "🛡️", kind: "consumable", desc: "抵挡一次灾难", basePrice: 80, color: "#5fc98f", effect: "shield" },
+  disaster_guard: { id: "disaster_guard", name: "应急锚点", icon: "⚓", kind: "consumable", desc: "接下来 50m 内灾难事故降级为严重事故（不结束本局）", basePrice: 140, color: "#6ee7b7", effect: "disaster_guard" },
   purifier:   { id: "purifier",   name: "深渊净化剂", icon: "🧪", kind: "consumable", desc: "本局免疫毒气", basePrice: 55, color: "#7cc4ff", effect: "purify" },
   dynamite:   { id: "dynamite",   name: "震波炸药", icon: "💣", kind: "consumable", desc: "本局穿透概率 +8%", basePrice: 70, color: "#ff8c42", effect: "pierce" },
   repair_kit_plus: { id: "repair_kit_plus", name: "高级维修套件", icon: "🛠️", kind: "consumable", desc: "恢复 100% 钻机耐久", basePrice: 260, color: "#c77dff", effect: "repair_plus" },
