@@ -2,9 +2,9 @@ import {
   CHECKPOINTS, ORES, backpackStats, detectionStats, drillStats,
   fmt, fmtCombo, persistSave, safetyStats, stageForDepth, supportStats,
 } from "./config";
-import type { OreId, SaveData } from "./config";
+import type { OreId, OreStack, SaveData } from "./config";
 import {
-  Layer, VEIN_NAME, generateLayer, hazardName, rollOreYield, upgradeQuality,
+  Layer, VEIN_NAME, generateLayer, hazardName, overloadOrePool, rollOreYield, upgradeQuality,
 } from "./world";
 import {
   CONSUMABLES, DIFFICULTY_DEFS, EMPTY_EQUIP_STATS, EQUIPMENT_DEFS,
@@ -13,7 +13,7 @@ import {
   mergeEquipStats, oreStackKey, oreUnitValue as oreUnitValueBase,
 } from "./items";
 import type {
-  BmStockItem, BuffId, Difficulty, EquipmentStats, OreQuality,
+  BmStockItem, BuffId, Difficulty, EquipmentInstance, EquipmentStats, OreQuality,
 } from "./items";
 import type {
   BagSlot, BlackMarketView, DailyTaskView, EngineCallbacks, LogEntry,
@@ -116,6 +116,8 @@ export class MinerGame {
 
   private lastResult: UiSnapshot["result"] | null = null;
   private resultOres: BagSlot[] = [];
+  // 局内购入的装备：只有成功撤离才写入仓库
+  private runPendingEquipment: EquipmentInstance[] = [];
   private gameoverInfo: UiSnapshot["gameover"] | null = null;
   private surfacedInfo: UiSnapshot["surfaced"] | null = null;
   private log: LogEntry[] = [];
@@ -196,6 +198,7 @@ export class MinerGame {
     this.loadValue = 0;
     this.lastResult = null;
     this.resultOres = [];
+    this.runPendingEquipment = [];
     this.gameoverInfo = null;
     this.surfacedInfo = null;
     this.particles = [];
@@ -203,7 +206,7 @@ export class MinerGame {
     this.log = [];
 
     // 装备加成汇总
-    this.equipStats = mergeEquipStats(...config.equipment.map((e) => EQUIPMENT_DEFS[e.id]?.stats));
+    this.equipStats = mergeEquipStats(...config.equipment.map((e) => e.stats));
     this.qualityBonus = (this.hasBuff("quality") ? 15 : 0) + this.equipStats.qualityBonus;
     this.valueBonus = this.equipStats.valueBonus;
     this.wearReduce = (this.hasBuff("wear_less") ? 30 : 0) + this.equipStats.wearReduce;
@@ -257,6 +260,10 @@ export class MinerGame {
     if (this.phase !== "observe") return;
     if (this.power <= 0) { this.logAdd("电量不足，无法钻进", "bad"); return; }
     this.drillMode = mode;
+    if (mode === "overload" && this.layer) {
+      this.layer.ores = overloadOrePool(this.depth);
+      this.logAdd("超载钻进：稀有矿权重提升！", "good");
+    }
     const hardness = this.layer?.hardness ?? 1;
     const base = mode === "cautious" ? 2.4 : mode === "standard" ? 1.7 : 1.15;
     this.drillDuration = base * (1 + (hardness - 1) * 0.14);
@@ -492,7 +499,7 @@ export class MinerGame {
   bmBuy(index: number, pay: "cash" | "ore"): void {
     if (this.phase !== "blackmarket") return;
     const item = this.bmStock[index];
-    if (!item) return;
+    if (!item || item.stock <= 0) return;
     if (item.kind === "consumable" && this.usedSlots() >= this.slots) {
       this.logAdd("背包已满，无法购买", "warn");
       this.audio.play("warning");
@@ -524,9 +531,12 @@ export class MinerGame {
       this.logAdd(`购入 ${item.name}`, "good");
     } else {
       const inst = makeEquipmentInstance(item.id);
-      this.save.warehouseEquipment.push(inst);
-      this.logAdd(`购入装备 ${item.name}（已存入装备仓库）`, "good");
+      this.runPendingEquipment.push(inst);
+      this.logAdd(`购入装备 ${item.name}（成功撤离后入库）`, "good");
     }
+    // 库存扣减，售完下架
+    item.stock -= 1;
+    if (item.stock <= 0) this.bmStock.splice(index, 1);
     this.audio.play("click");
     persistSave(this.save);
     this.pushUi();
@@ -765,6 +775,7 @@ export class MinerGame {
 
   private advanceLayer(): void {
     this.depth += 10;
+    this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
     this.milkCount = 0;
     this.supportsUsedThisLayer = false;
     this.detectorDisabled = false;
@@ -879,12 +890,10 @@ export class MinerGame {
     const lost = this.removeOreValue(lossMult);
     const saved = Math.round(this.loadValue);
     const depthAt = this.depth;
-    // 救援带回的矿石入库（剩余背包矿石即"被救回"的部分）
-    for (const slot of this.bag) {
-      if (slot.kind !== "ore" || slot.quality === undefined) continue;
-      const key = oreStackKey(slot.id as OreId, slot.quality);
-      this.save.warehouseOres[key] = (this.save.warehouseOres[key] ?? 0) + slot.count;
-    }
+    // 救援带回的矿石入库（剩余背包矿石即"被救回"的部分，锁定单价）
+    this.depositBag();
+    // 局内购入的装备未能成功撤离，随灾难丢失
+    this.runPendingEquipment = [];
     // 随身现金：50% 损失，50% 回归仓库
     const pocketLost = Math.round(this.pocket * 0.5);
     const pocketReturn = Math.round(this.pocket) - pocketLost;
@@ -919,18 +928,39 @@ export class MinerGame {
     this.cb.onRunEnd({ kind: "disaster", banked: saved, depth: depthAt, best: wasBest, rating: null, bonus: 0, save: this.save });
   }
 
+  // 将当前背包中的矿石/消耗品写入仓库：矿石堆锁定开采当刻单价
+  private depositBag(): void {
+    for (const slot of this.bag) {
+      if (slot.kind === "ore" && slot.quality !== undefined) {
+        this.save.warehouseStacks.push({
+          key: oreStackKey(slot.id as OreId, slot.quality),
+          count: slot.count,
+          unitValue: Math.round(slot.unitValue),
+        });
+      } else if (slot.kind === "item") {
+        this.save.warehouseItems[slot.id] = (this.save.warehouseItems[slot.id] ?? 0) + 1;
+      }
+    }
+    // 合并同 key + 同单价的堆，保持仓库整洁
+    const map = new Map<string, OreStack>();
+    for (const s of this.save.warehouseStacks) {
+      const k = s.key + "@" + s.unitValue;
+      const cur = map.get(k);
+      if (cur) cur.count += s.count;
+      else map.set(k, { ...s });
+    }
+    this.save.warehouseStacks = [...map.values()];
+  }
+
   private finishRun(): void {
     if (this.runEnded) return;
     const banked = Math.round(this.loadValue);
     const depthAt = this.depth;
-    // 背包矿石入库；消耗品回仓库；随身现金回归
-    for (const slot of this.bag) {
-      if (slot.kind === "ore" && slot.quality !== undefined) {
-        const key = oreStackKey(slot.id as OreId, slot.quality);
-        this.save.warehouseOres[key] = (this.save.warehouseOres[key] ?? 0) + slot.count;
-      } else if (slot.kind === "item") {
-        this.save.warehouseItems[slot.id] = (this.save.warehouseItems[slot.id] ?? 0) + 1;
-      }
+    // 背包矿石入库（锁定单价）；消耗品回仓库；局内购入装备成功撤离后入库
+    this.depositBag();
+    if (this.runPendingEquipment.length) {
+      this.save.warehouseEquipment.push(...this.runPendingEquipment);
+      this.runPendingEquipment = [];
     }
     const pocketReturn = Math.round(this.pocket);
     this.save.cash += pocketReturn;
@@ -1175,6 +1205,7 @@ export class MinerGame {
 
       if (i < layers - 1) {
         this.depth += 10;
+        this.retreatBlocked = Math.max(0, this.retreatBlocked - 1);
         const det = detectionStats(this.save.upgrades.detection);
         this.layer = this.genLayer(this.depth, Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100));
         this.milkCount = 0;

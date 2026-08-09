@@ -3,19 +3,14 @@
 import { useEffect } from "react";
 import { SaveData, fmt, persistSave } from "@/game/config";
 import {
-  CONSUMABLES, EQUIPMENT_DEFS, EquipmentInstance, ItemTier,
-  ShopStock, TIER_NAMES, dateKey, generateDailyShop,
+  CONSUMABLES, EQUIPMENT_DEFS, ItemTier,
+  ShopStock, TIER_NAMES, dateKey, equipInstanceDesc, generateDailyShop, makeEquipmentInstance, scaleStats,
 } from "@/game/items";
 
 type Props = {
   save: SaveData;
   onSave: (next: SaveData) => void;
 };
-
-// 生成装备实例 uid
-function newUid(): string {
-  return "eq_" + Math.random().toString(36).slice(2, 10);
-}
 
 export default function ShopPanel({ save, onSave }: Props) {
   const today = dateKey();
@@ -40,10 +35,10 @@ export default function ShopPanel({ save, onSave }: Props) {
       // 消耗品入仓库，可叠加
       warehouseItems = { ...save.warehouseItems, [stock.id]: (save.warehouseItems[stock.id] ?? 0) + 1 };
     } else {
-      // 装备：按货架 tier 手动构建实例（makeEquipmentInstance 会随机 tier）
+      // 装备：按货架 tier 生成带缩放属性的实例
       const def = EQUIPMENT_DEFS[stock.id];
       const tier: ItemTier = stock.tier ?? def.tier ?? 1;
-      const inst: EquipmentInstance = { uid: newUid(), id: stock.id, slot: def.slot!, tier };
+      const inst = makeEquipmentInstance(stock.id, tier);
       warehouseEquipment = [...save.warehouseEquipment, inst];
     }
     const next: SaveData = { ...save, cash: save.cash - stock.price, warehouseItems, warehouseEquipment };
@@ -79,10 +74,11 @@ export default function ShopPanel({ save, onSave }: Props) {
             const tier: ItemTier = stock.tier ?? def.tier ?? 1;
             const tierCls = tier === 3 ? "shop-tier-3" : tier === 2 ? "shop-tier-2" : "shop-tier-1";
             const afford = save.cash >= stock.price;
+            const tmpInst = { uid: "shop", id: stock.id, slot: def.slot!, tier, stats: scaleStats(def.stats ?? {}, tier) };
             return (
               <div key={stock.id + "-" + i} className="shop-card">
                 <div className={`shop-name ${tierCls}`}>{def.icon} {def.name}</div>
-                <div className="shop-desc">[{TIER_NAMES[tier]}] {def.desc}</div>
+                <div className="shop-desc">{equipInstanceDesc(tmpInst)}</div>
                 <div className="shop-price">{fmt(stock.price)} 💰</div>
                 <button className="btn btn-primary btn-sm" disabled={!afford} onClick={() => buy(stock)}>
                   {afford ? "购买" : "现金不足"}

@@ -94,7 +94,27 @@ export type ItemTier = 1 | 2 | 3;
 
 export const TIER_NAMES: Record<ItemTier, string> = { 1: "普通", 2: "精良", 3: "极品" };
 
-export type EquipmentInstance = { uid: string; id: string; slot: EquipmentSlot; tier: ItemTier };
+// 装备 tier 属性倍率：1 普通 / 2 精良 / 3 极品
+export const TIER_MULT: Record<ItemTier, number> = { 1: 1, 2: 1.8, 3: 3.2 };
+
+// 按 tier 缩放装备基准属性（四舍五入取整）
+export function scaleStats(stats: Partial<EquipmentStats>, tier: ItemTier): Partial<EquipmentStats> {
+  const mult = TIER_MULT[tier] ?? 1;
+  const out: Partial<EquipmentStats> = {};
+  for (const k of Object.keys(EMPTY_EQUIP_STATS) as Array<keyof EquipmentStats>) {
+    const v = stats[k];
+    if (v) out[k] = Math.round(v * mult);
+  }
+  return out;
+}
+
+export type EquipmentInstance = {
+  uid: string;
+  id: string;
+  slot: EquipmentSlot;
+  tier: ItemTier;
+  stats: Partial<EquipmentStats>; // tier 缩放后的实际属性（v3 起随实例保存）
+};
 
 // ================= 道具 / 装备定义 =================
 
@@ -182,10 +202,39 @@ export function rollEquipmentId(): string {
   return EQUIPMENT_IDS[Math.floor(Math.random() * EQUIPMENT_IDS.length)];
 }
 
-export function makeEquipmentInstance(id: string): EquipmentInstance {
+export function makeEquipmentInstance(id: string, tierOverride?: ItemTier): EquipmentInstance {
   const def = EQUIPMENT_DEFS[id];
-  const tier = def.tier ?? rollEquipmentTier();
-  return { uid: "eq_" + Math.random().toString(36).slice(2, 10), id, slot: def.slot!, tier };
+  const tier = tierOverride ?? def.tier ?? rollEquipmentTier();
+  return {
+    uid: "eq_" + Math.random().toString(36).slice(2, 10),
+    id,
+    slot: def.slot!,
+    tier,
+    stats: scaleStats(def.stats ?? {}, tier),
+  };
+}
+
+// 按槽位随机生成一件指定 tier 的装备（用于商店/黑市/掉落）
+export function makeEquipmentOfSlot(slot: EquipmentSlot, tier: ItemTier): EquipmentInstance {
+  const ids = EQUIPMENT_IDS.filter((id) => EQUIPMENT_DEFS[id].slot === slot);
+  const id = ids[Math.floor(Math.random() * ids.length)] ?? EQUIPMENT_IDS[0];
+  return makeEquipmentInstance(id, tier);
+}
+
+// 装备实例描述（展示 tier 与缩放后的属性）
+export function equipInstanceDesc(inst: EquipmentInstance): string {
+  const parts: string[] = [];
+  const s = inst.stats ?? {};
+  if (s.qualityBonus) parts.push("高品质 +" + s.qualityBonus + "%");
+  if (s.slotBonus) parts.push("背包格 +" + s.slotBonus);
+  if (s.wearReduce) parts.push("损耗 -" + s.wearReduce + "%");
+  if (s.detectorBonus) parts.push("探测器 +" + s.detectorBonus);
+  if (s.accuracyBonus) parts.push("精度 +" + s.accuracyBonus + "%");
+  if (s.pierceBonus) parts.push("穿透 +" + s.pierceBonus + "%");
+  if (s.banditReduce) parts.push("强盗损失 -" + s.banditReduce + "%");
+  if (s.valueBonus) parts.push("价值 +" + s.valueBonus + "%");
+  if (s.anomalyResist) parts.push("异常抗性 +" + s.anomalyResist + "%");
+  return "[" + TIER_NAMES[inst.tier] + "] " + (parts.length ? parts.join(" · ") : "无特殊属性");
 }
 
 // ================= 一次性增益（开局购买） =================
@@ -277,6 +326,7 @@ export type BmStockItem = {
   oreCost: { id: OreId; quality: OreQuality; count: number };
   cashPrice: number; // 现金等价（已含好感度折扣/黑市buff）
   payOreValue: number; // 用矿石支付时的总价值
+  stock: number; // 库存数量（默认 1：限购一件，售完下架）
 };
 
 // 黑市矿石售价比例：50% 起，好感度每级 +5%，上限 75%（抬价行情 +10%）
@@ -331,6 +381,7 @@ export function generateBmStock(
       oreCost: { id: oreId, quality, count },
       cashPrice,
       payOreValue: Math.round(payOreValue),
+      stock: 1,
     });
   }
   return stock;

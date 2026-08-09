@@ -11,7 +11,7 @@ import LeaderboardScreen from "./LeaderboardScreen";
 import AuthModal from "./AuthModal";
 import { apiLogout, apiMe, apiSubmitScore, AuthUser } from "@/lib/api";
 
-type ScoreSubmit = { value: number; depth: number };
+type ScoreSubmit = { runId: string; value: number; depth: number };
 
 export default function GameApp() {
   const [save, setSave] = useState<SaveData>(() => loadSave());
@@ -25,6 +25,7 @@ export default function GameApp() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [muted, setMuted] = useState<boolean>(() => loadSave().settings.muted);
   const [pendingScore, setPendingScore] = useState<ScoreSubmit | null>(null);
+  const [runId, setRunId] = useState<string>("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "done" | "needLogin" | "error">("idle");
   const [toast, setToast] = useState<string | null>(null);
 
@@ -63,6 +64,12 @@ export default function GameApp() {
     setRunConfig(config);
     setSubmitState("idle");
     setPendingScore(null);
+    // 每局唯一 run ID：用于排行榜幂等提交（同一局不会重复上榜）
+    const rid =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : "run_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+    setRunId(rid);
     setInRun(true);
     audioRef.current?.play("click");
   }, []);
@@ -71,11 +78,11 @@ export default function GameApp() {
     async (result: RunResult) => {
       setSave(result.save);
       if (result.kind === "surfaced" && result.banked > 0) {
-        setPendingScore({ value: result.banked, depth: result.depth });
+        setPendingScore({ runId, value: result.banked, depth: result.depth });
         if (user) {
           setSubmitState("submitting");
           try {
-            await apiSubmitScore(result.banked, result.depth);
+            await apiSubmitScore(runId, result.banked, result.depth);
             setSubmitState("done");
             showToast("成绩已上榜！");
           } catch {
@@ -87,7 +94,7 @@ export default function GameApp() {
         }
       }
     },
-    [user, showToast]
+    [user, showToast, runId]
   );
 
   const handleLogin = useCallback(
@@ -98,7 +105,7 @@ export default function GameApp() {
       // 登录成功后提交待处理成绩
       if (pendingScore) {
         setSubmitState("submitting");
-        apiSubmitScore(pendingScore.value, pendingScore.depth)
+        apiSubmitScore(pendingScore.runId, pendingScore.value, pendingScore.depth)
           .then(() => {
             setSubmitState("done");
             showToast("成绩已上榜！");

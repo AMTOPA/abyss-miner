@@ -3,7 +3,7 @@
 import { SaveData, persistSave } from "@/game/config";
 import {
   EQUIPMENT_DEFS, EQUIPMENT_SLOT_NAMES, EquipmentInstance, EquipmentSlot,
-  EquipmentStats, ItemTier, TIER_NAMES, mergeEquipStats,
+  EquipmentStats, ItemTier, TIER_NAMES, equipInstanceDesc, mergeEquipStats,
 } from "@/game/items";
 
 type Props = {
@@ -36,7 +36,7 @@ function tierCls(tier: ItemTier): string {
 export default function LoadoutPanel({ save, onSave }: Props) {
   // 已装备实例
   const equippedList = save.warehouseEquipment.filter((e) => save.equipped[e.slot] === e.uid);
-  const merged = mergeEquipStats(...equippedList.map((e) => EQUIPMENT_DEFS[e.id].stats));
+  const merged = mergeEquipStats(...equippedList.map((e) => e.stats));
   const mergedLines = statLines(merged);
 
   // 装备：写入 save.equipped[slot] = uid（同槽位旧装备自动被覆盖卸下）
@@ -92,7 +92,7 @@ export default function LoadoutPanel({ save, onSave }: Props) {
                 <div key={inst.uid} className="equip-card">
                   <div className={`shop-name ${tierCls(inst.tier)}`}>{def.icon} {def.name}</div>
                   <div className="shop-desc">
-                    {EQUIPMENT_SLOT_NAMES[inst.slot]} · [{TIER_NAMES[inst.tier]}] {def.desc}
+                    {EQUIPMENT_SLOT_NAMES[inst.slot]} · {equipInstanceDesc(inst)}
                   </div>
                   <div className="equip-btn">
                     {isOn ? (

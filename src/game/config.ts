@@ -95,14 +95,12 @@ export function safetyStats(level: number) {
 }
 
 export function backpackStats(level: number) {
-  // v2：背包升级 = 每级 +1 格子（初始 5 格）；装备/增益可再增加
   return {
     slots: 5 + level,
   };
 }
 
 export function backpackUpgradeCost(level: number): number {
-  // 升级背包价格较高：160 起步 ×1.6 递增
   return Math.round(160 * Math.pow(1.6, level));
 }
 
@@ -117,8 +115,8 @@ export function detectionStats(level: number) {
 export function supportStats(level: number) {
   return {
     supports: Math.min(8, 2 + Math.floor(level / 2)),
-    effect: Math.max(0.12, 0.25 - 0.011 * level), // 塌方风险倍率
-    megaShield: level >= 6, // 高级支撑：每轮一次抵挡灾难
+    effect: Math.max(0.12, 0.25 - 0.011 * level),
+    megaShield: level >= 6,
   };
 }
 
@@ -130,19 +128,22 @@ export function checkpointCost(depth: number): number {
   return Math.round(depth * 0.6);
 }
 
-// ---------- 存档（v2） ----------
+// ---------- 存档（v3） ----------
 
 export type DailyProgress = { date: string; tasks: Record<string, number>; claimed: Record<string, boolean> };
+
+// 矿石堆：撤离/救援时锁定开采当刻的单价，之后价格不随深度、纪录或市场变化
+export type OreStack = { key: string; count: number; unitValue: number };
 
 export type SaveData = {
   version: number;
   cash: number;
   upgrades: Record<UpgradeId, number>;
   unlockedCheckpoints: number[];
-  // v2：仓库（撤离的矿石不直接变现，存入仓库）
-  warehouseOres: Record<string, number>;       // key `${oreId}:${quality}` -> 数量
+  // v3：矿石堆列表（每个堆锁定 unitValue）
+  warehouseStacks: OreStack[];
   warehouseItems: Record<string, number>;      // 消耗品 itemId -> 数量
-  warehouseEquipment: EquipmentInstance[];     // 拥有的装备
+  warehouseEquipment: EquipmentInstance[];     // 拥有的装备（实例自带 tier 缩放后的属性）
   equipped: Partial<Record<"drill" | "pack" | "armor" | "detector" | "charm", string>>; // uid -> 已装备
   shop: { date: string; stock: ShopStock[] };  // 每日刷新商店
   favor: number;                               // 黑市好感 0..5（跨局）
@@ -158,18 +159,19 @@ export type SaveData = {
     totalSells: number;
     creaturesScared: number;
   };
-  settings: { muted: boolean };
+  settings: { muted: boolean; reduceMotion: boolean };
 };
 
-export const SAVE_KEY = "abyss_miner_save_v2";
+export const SAVE_KEY = "abyss_miner_save_v3";
+export const SAVE_BACKUP_KEY = "abyss_miner_save_backup_v3";
 
 export function defaultSave(): SaveData {
   return {
-    version: 2,
+    version: 3,
     cash: 0,
     upgrades: { drill: 0, safety: 0, backpack: 0, detection: 0, support: 0 },
     unlockedCheckpoints: [0],
-    warehouseOres: {},
+    warehouseStacks: [],
     warehouseItems: {},
     warehouseEquipment: [],
     equipped: {},
@@ -178,59 +180,13 @@ export function defaultSave(): SaveData {
     difficultyUnlocked: ["mild", "normal"],
     daily: { date: "", tasks: {}, claimed: {} },
     stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0 },
-    settings: { muted: false },
+    settings: { muted: false, reduceMotion: false },
   };
 }
 
-export function loadSave(): SaveData {
-  if (typeof window === "undefined") return defaultSave();
-  try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    // v1 存档迁移：保留现金/升级/检查点/统计/设置
-    if (!raw) {
-      const legacy = window.localStorage.getItem("abyss_miner_save_v1");
-      if (legacy) {
-        const p = JSON.parse(legacy);
-        return {
-          ...defaultSave(),
-          cash: p.cash ?? 0,
-          upgrades: { ...defaultSave().upgrades, ...(p.upgrades ?? {}) },
-          unlockedCheckpoints: Array.isArray(p.unlockedCheckpoints) ? p.unlockedCheckpoints : [0],
-          stats: { ...defaultSave().stats, ...(p.stats ?? {}) },
-          settings: { muted: !!p.settings?.muted },
-        };
-      }
-      return defaultSave();
-    }
-    const parsed = JSON.parse(raw);
-    return {
-      ...defaultSave(),
-      ...parsed,
-      upgrades: { ...defaultSave().upgrades, ...(parsed.upgrades ?? {}) },
-      unlockedCheckpoints: Array.isArray(parsed.unlockedCheckpoints) ? parsed.unlockedCheckpoints : [0],
-      warehouseOres: parsed.warehouseOres ?? {},
-      warehouseItems: parsed.warehouseItems ?? {},
-      warehouseEquipment: parsed.warehouseEquipment ?? [],
-      equipped: parsed.equipped ?? {},
-      shop: parsed.shop ?? { date: "", stock: [] },
-      daily: parsed.daily ?? { date: "", tasks: {}, claimed: {} },
-      difficultyUnlocked: parsed.difficultyUnlocked ?? ["mild", "normal"],
-      stats: { ...defaultSave().stats, ...(parsed.stats ?? {}) },
-      settings: { muted: !!parsed.settings?.muted },
-    };
-  } catch {
-    return defaultSave();
-  }
-}
+// ---------- 存档加载 / 迁移 / 持久化（实现见 save.ts，避免与 items.ts 循环依赖） ----------
 
-export function persistSave(save: SaveData): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  } catch {
-    /* ignore quota errors */
-  }
-}
+export { loadSave, persistSave, normalizeSave } from "./save";
 
 // ---------- 格式化 ----------
 

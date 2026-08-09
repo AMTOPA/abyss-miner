@@ -35,6 +35,6 @@ export async function apiLeaderboard(limit = 50): Promise<LeaderboardData> {
   return res.json();
 }
 
-export async function apiSubmitScore(runValue: number, depth: number): Promise<{ ok: true; best: { best_value: number; best_depth: number; runs: number } }> {
-  return post("/api/leaderboard", { runValue, depth });
+export async function apiSubmitScore(runId: string, runValue: number, depth: number): Promise<{ ok: true; best: { best_value: number; best_depth: number; runs: number } }> {
+  return post("/api/leaderboard", { runId, runValue, depth });
 }

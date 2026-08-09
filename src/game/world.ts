@@ -99,6 +99,11 @@ function instabilityFor(depth: number, quality: VeinQuality): number {
   return Math.max(0.02, Math.min(0.85, v));
 }
 
+// 超载钻进专用矿池：提升稀有矿权重（引擎在选择超载模式时调用）
+export function overloadOrePool(depth: number): OreId[] {
+  return orePoolForDepth(depth, true);
+}
+
 function orePoolForDepth(depth: number, overload: boolean): OreId[] {
   const pool: OreId[] = [];
   const add = (id: OreId, w: number) => {

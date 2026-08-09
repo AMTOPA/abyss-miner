@@ -77,7 +77,7 @@ export default function LobbyScreen(props: LobbyProps) {
   const cpCost = depth === 0 ? 0 : checkpointCost(depth);
   const buffCost = buffs.reduce((s, b) => s + (drawFlags[b] ? BUFF_RANDOM_PRICE : BUFF_DEFS[b].price), 0);
   const totalCost = cpCost + buffCost;
-  const canAfford = save.cash >= totalCost;
+  const canAfford = save.cash >= totalCost + pocketShown;
   const pocketCan = maxPocket > 0;
 
   // 已装备实例（出战装备）
@@ -131,7 +131,8 @@ export default function LobbyScreen(props: LobbyProps) {
       if (cur > 1) warehouseItems[id] = cur - 1;
       else delete warehouseItems[id];
     }
-    const next: SaveData = { ...save, cash: save.cash - totalCost, warehouseItems };
+    // 随身现金也是真实资产：出发时从仓库现金扣除，撤离后剩余带回
+    const next: SaveData = { ...save, cash: save.cash - totalCost - pocketShown, warehouseItems };
     persistSave(next);
     onSave(next);
     props.onStart(

@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { createSessionToken } from "@/lib/auth";
+import { createSessionToken, hashPassword } from "@/lib/auth";
 import { createUser, findUserByUsername } from "@/lib/db";
 
 const USERNAME_RE = /^[\w\u4e00-\u9fa5]{2,16}$/;
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   if (findUserByUsername(username)) {
     return NextResponse.json({ error: "该用户名已被注册" }, { status: 409 });
   }
-  const user = createUser(username, password);
+  const user = createUser(username, hashPassword(password));
   await createSessionToken(user);
   return NextResponse.json({ ok: true, user: { id: user, username } });
 }

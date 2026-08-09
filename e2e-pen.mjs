@@ -13,10 +13,22 @@ const results = [];
 const ok = (name, cond, extra = "") =>
   results.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? " | " + extra : ""}`);
 
-const browser = await chromium.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  headless: true,
-});
+// 浏览器启动：优先 CHROME_PATH 环境变量，其次常见系统浏览器，最后回退 Playwright 自带 Chromium
+async function launchBrowser() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      return await chromium.launch({ executablePath: p, headless: true });
+    } catch { /* try next */ }
+  }
+  return chromium.launch({ headless: true });
+}
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 
 // 收集 pageerror / console error（favicon 404 忽略）
@@ -208,7 +220,7 @@ await page.evaluate(() => {
     stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0 },
     settings: { muted: true },
   };
-  localStorage.setItem("abyss_miner_save_v2", JSON.stringify(save));
+  localStorage.setItem("abyss_miner_save_v3", JSON.stringify(save));
 });
 await page.reload({ waitUntil: "networkidle" });
 await page.waitForTimeout(600);
@@ -346,12 +358,13 @@ ok("no page/console errors", errs.length === 0, errs.length ? errs.join(" | ") :
 const wentHome = await backToHome(8);
 ok("back to main menu (lobby)", wentHome);
 
+const fails = results.filter((r) => r.startsWith("FAIL")).length;
 console.log("=== RESULTS ===");
 console.log(results.join("\n"));
 console.log("=== ERRORS ===");
 console.log(errs.length ? errs.join("\n") : "(none)");
 
 await browser.close();
-process.exit(0);
+process.exit(fails > 0 || errs.length > 0 ? 1 : 0);
 
 

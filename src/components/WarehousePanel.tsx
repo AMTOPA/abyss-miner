@@ -1,57 +1,54 @@
 "use client";
 
 import { useMemo } from "react";
-import { SaveData, ORES, OreId, fmt, persistSave } from "@/game/config";
-import { CONSUMABLES, ORE_QUALITIES, OreQuality, oreUnitValue, parseOreKey } from "@/game/items";
+import { OreStack, SaveData, ORES, fmt, persistSave } from "@/game/config";
+import { CONSUMABLES, ORE_QUALITIES, OreQuality, parseOreKey } from "@/game/items";
 
 type Props = {
   save: SaveData;
   onSave: (next: SaveData) => void;
 };
 
-type OreRow = {
-  key: string; // `${oreId}:${quality}`
-  id: OreId;
+type OreRow = OreStack & {
+  id: string;
   quality: OreQuality;
-  count: number;
-  unit: number;  // 单价
-  total: number; // 该堆总价值
+  total: number; // 该堆总价值（锁定单价 × 数量）
 };
 
 export default function WarehousePanel({ save, onSave }: Props) {
-  // 参考深度：用历史最深，避免空档期价值波动
-  const refDepth = save.stats.bestDepth > 0 ? save.stats.bestDepth : 100;
-
+  // 每堆矿石都锁定开采当刻的单价，价格不随历史最深纪录/市场波动
   const oreRows = useMemo<OreRow[]>(() => {
     const rows: OreRow[] = [];
-    for (const [key, count] of Object.entries(save.warehouseOres)) {
-      const parsed = parseOreKey(key);
-      if (!parsed || count <= 0) continue;
-      const unit = oreUnitValue(refDepth, parsed.id, parsed.quality);
-      rows.push({ key, id: parsed.id, quality: parsed.quality, count, unit, total: unit * count });
+    for (const s of save.warehouseStacks) {
+      if (s.count <= 0) continue;
+      const parsed = parseOreKey(s.key);
+      if (!parsed) continue;
+      rows.push({
+        key: s.key, count: s.count, unitValue: s.unitValue,
+        id: parsed.id, quality: parsed.quality, total: s.unitValue * s.count,
+      });
     }
-    // 按总价值从高到低展示
     rows.sort((a, b) => b.total - a.total);
     return rows;
-  }, [save.warehouseOres, refDepth]);
+  }, [save.warehouseStacks]);
 
   const totalValue = oreRows.reduce((s, r) => s + r.total, 0);
   const itemRows = Object.entries(save.warehouseItems).filter(([, c]) => c > 0);
 
-  // 卖出矿石：增加现金并移除对应数量
+  // 卖出矿石：按该堆锁定的单价变现，不影响其他堆
   const sell = (row: OreRow, n: number) => {
-    const cur = save.warehouseOres[row.key] ?? 0;
+    const stack = save.warehouseStacks.find((s) => s.key === row.key && s.unitValue === row.unitValue);
+    const cur = stack ? stack.count : 0;
     if (cur <= 0) return;
     const sellCount = Math.max(1, Math.min(n, cur));
-    const gained = Math.round(row.unit * sellCount);
-    const ores = { ...save.warehouseOres };
-    const left = cur - sellCount;
-    if (left <= 0) delete ores[row.key];
-    else ores[row.key] = left;
+    const gained = Math.round(row.unitValue * sellCount);
+    const nextStacks = save.warehouseStacks
+      .map((s) => (s === stack ? { ...s, count: s.count - sellCount } : s))
+      .filter((s) => s.count > 0);
     const next: SaveData = {
       ...save,
       cash: save.cash + gained,
-      warehouseOres: ores,
+      warehouseStacks: nextStacks,
       stats: { ...save.stats, totalSells: save.stats.totalSells + sellCount },
     };
     persistSave(next);
@@ -61,24 +58,24 @@ export default function WarehousePanel({ save, onSave }: Props) {
   return (
     <div className="deploy-layout">
       <section className="deploy-section">
-        <h3 className="deploy-section-title">矿石仓库（按 {refDepth}m 深度估值）</h3>
+        <h3 className="deploy-section-title">矿石仓库（单价已锁定，不随深度波动）</h3>
         {oreRows.length === 0 ? (
           <p className="modal-hint">仓库空空如也，下矿把矿石带回来吧！</p>
         ) : (
           <div className="wh-list">
             {oreRows.map((row) => {
-              const ore = ORES[row.id];
+              const ore = ORES[row.id as keyof typeof ORES];
               const q = ORE_QUALITIES[row.quality];
               return (
-                <div key={row.key} className="wh-row">
+                <div key={row.key + "@" + row.unitValue + "-" + row.count} className="wh-row">
                   <div className="wh-ore">
                     <span style={{ color: q.color }}>
-                      {q.icon} {ore.name}·{q.name}
+                      {q.icon} {ore ? ore.name : row.id}·{q.name}
                     </span>
                     <span className="wh-qty">×{row.count}</span>
                   </div>
                   <div className="wh-value">
-                    单价 {fmt(row.unit)} · 合计 <span className="gold">{fmt(row.total)}</span>
+                    锁定单价 {fmt(row.unitValue)} · 合计 <span className="gold">{fmt(row.total)}</span>
                   </div>
                   <div className="wh-sell">
                     <button className="btn btn-secondary btn-sm" onClick={() => sell(row, 1)}>卖 1</button>

@@ -28,11 +28,18 @@ export function getDb(): DatabaseSync {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       run_value INTEGER NOT NULL,
       depth INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      run_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_scores_user ON scores(user_id);
     CREATE INDEX IF NOT EXISTS idx_scores_value ON scores(run_value DESC);
   `);
+  // v3 迁移：scores 增加 run_id 列（幂等提交 + 唯一索引，防重复上榜）
+  const scoreCols = db.prepare("PRAGMA table_info(scores)").all() as Array<{ name: string }>;
+  if (!scoreCols.some((col) => col.name === "run_id")) {
+    db.exec("ALTER TABLE scores ADD COLUMN run_id TEXT;");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_scores_run ON scores(user_id, run_id) WHERE run_id IS NOT NULL;");
+  }
   return db;
 }
 
@@ -71,6 +78,26 @@ export function deleteSession(token: string): void {
 
 export function deleteExpiredSessions(): void {
   getDb().prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
+}
+
+export function updateUserPasswordHash(userId: number, passwordHash: string): void {
+  getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
+}
+
+// 幂等提交：同一 run_id 只能提交一次；返回是否为新插入（false = 重复提交）
+export function addScoreIdempotent(userId: number, runValue: number, depth: number, runId: string): boolean {
+  const info = getDb()
+    .prepare("INSERT OR IGNORE INTO scores (user_id, run_value, depth, created_at, run_id) VALUES (?, ?, ?, ?, ?)")
+    .run(userId, Math.max(0, Math.round(runValue)), Math.max(0, Math.round(depth)), Date.now(), runId);
+  return Number(info.changes) > 0;
+}
+
+// 限流：统计该用户最近 sinceMs 毫秒内的提交次数
+export function countRecentScores(userId: number, sinceMs: number): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM scores WHERE user_id = ? AND created_at >= ?")
+    .get(userId, sinceMs) as { n: number };
+  return Number(row.n);
 }
 
 export function addScore(userId: number, runValue: number, depth: number): void {

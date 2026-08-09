@@ -8,10 +8,22 @@ const results = [];
 const ok = (name, cond, extra = "") =>
   results.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? " | " + extra : ""}`);
 
-const browser = await chromium.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  headless: true,
-});
+// 浏览器启动：优先 CHROME_PATH 环境变量，其次常见系统浏览器，最后回退 Playwright 自带 Chromium
+async function launchBrowser() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      return await chromium.launch({ executablePath: p, headless: true });
+    } catch { /* try next */ }
+  }
+  return chromium.launch({ headless: true });
+}
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 const errs = [];
 page.on("pageerror", (e) => errs.push("PAGEERROR: " + e.message));
@@ -22,10 +34,13 @@ page.on("dialog", (d) => d.accept());
 await page.goto(BASE, { waitUntil: "domcontentloaded" });
 await page.evaluate(() => {
   const save = {
-    version: 2, cash: 8000,
+    version: 3, cash: 8000,
     upgrades: { drill: 5, safety: 4, backpack: 3, detection: 3, support: 2 },
     unlockedCheckpoints: [0, 100, 300],
-    warehouseOres: { "copper:normal": 20, "silver:fine": 5 },
+    warehouseStacks: [
+      { key: "copper:normal", count: 20, unitValue: 20 },
+      { key: "silver:fine", count: 5, unitValue: 60 },
+    ],
     warehouseItems: { repair_kit: 3 },
     warehouseEquipment: [], equipped: {}, shop: { date: "", stock: [] },
     favor: 1, difficultyUnlocked: ["mild", "normal", "hardcore"],
@@ -33,7 +48,7 @@ await page.evaluate(() => {
     stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 500, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0 },
     settings: { muted: true },
   };
-  localStorage.setItem("abyss_miner_save_v2", JSON.stringify(save));
+  localStorage.setItem("abyss_miner_save_v3", JSON.stringify(save));
 });
 await page.reload({ waitUntil: "networkidle" });
 
@@ -211,9 +226,10 @@ await page.waitForSelector(".lb-table", { timeout: 8000 });
 const lbText = await page.locator(".lb-table").innerText().catch(() => "");
 ok("leaderboard has user", lbText.includes(uname));
 
+const fails = results.filter((r) => r.startsWith("FAIL")).length;
 console.log("=== RESULTS ===");
 console.log(results.join("\n"));
 console.log("=== ERRORS ===");
 console.log(errs.length ? errs.join("\n") : "(none)");
 await browser.close();
-process.exit(0);
+process.exit(fails > 0 || errs.length > 0 ? 1 : 0);

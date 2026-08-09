@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "vitest run",
+    "test:e2e": "node e2e-test.mjs && node e2e-pen.mjs"
   },
   "dependencies": {
     "next": "^15.3.3",
@@ -17,6 +19,8 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "typescript": "^5.8.0"
+    "playwright": "^1.62.1",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.10"
   }
 }
