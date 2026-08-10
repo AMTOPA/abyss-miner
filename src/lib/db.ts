@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
-export const SCORE_KINDS = ["value", "depth", "hardcore", "net"] as const;
+export const SCORE_KINDS = ["value", "depth", "hardcore", "net", "daily"] as const;
 export type ScoreKind = (typeof SCORE_KINDS)[number];
 
 let db: DatabaseSync | null = null;
@@ -209,8 +209,10 @@ function leaderboardOrder(kind: ScoreKind): string {
   return "best_value DESC, best_depth DESC, last_run_at DESC";
 }
 
-export function getLeaderboard(limit = 50, kind: ScoreKind = "value"): LeaderboardEntry[] {
+export function getLeaderboard(limit = 50, kind: ScoreKind = "value", dayFilter?: string): LeaderboardEntry[] {
   const safeLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 50));
+  // v11????? runId ?? daily-<date>- ??????
+  const dailyPrefix = kind === "daily" ? `daily-${dayFilter ?? ""}-%` : null;
   const rows = getDb()
     .prepare(
       `SELECT u.username AS username,
@@ -221,12 +223,12 @@ export function getLeaderboard(limit = 50, kind: ScoreKind = "value"): Leaderboa
               MAX(s.created_at) AS last_run_at
        FROM scores s
        JOIN users u ON u.id = s.user_id
-       WHERE s.kind = ?
+       WHERE s.kind = ?${dailyPrefix ? " AND s.run_id LIKE ?" : ""}
        GROUP BY s.user_id, u.username
        ORDER BY ${leaderboardOrder(kind)}
        LIMIT ?`
     )
-    .all(kind, safeLimit) as LeaderboardStats[];
+    .all(...(dailyPrefix ? [kind, dailyPrefix, safeLimit] : [kind, safeLimit])) as LeaderboardStats[];
 
   return rows.map((row, index) => ({
     ...row,

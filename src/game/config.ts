@@ -177,7 +177,8 @@ export type SaveData = {
   };
   daily: DailyProgress;                        // 每日任务进度（好感度来源）
   orders: { date: string; active: string[]; done: string[] };
-  checkin: { date: string; streak: number; total: number }; // v9：黑市订单（每日 3 单，仓库交付）
+  checkin: { date: string; streak: number; total: number }; // v10: daily checkin
+  achievements: string[];                // v11: claimed achievement ids
   stats: {
     runs: number;
     totalBanked: number;
@@ -216,6 +217,7 @@ export function defaultSave(): SaveData {
     daily: { date: "", tasks: {}, claimed: {} },
     orders: { date: "", active: [], done: [] },
     checkin: { date: "", streak: 0, total: 0 },
+    achievements: [],
     stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0, bmTrades: 0, anomaliesSeen: 0, overloadDrills: 0 },
     settings: { muted: false, reduceMotion: false, shakeEnabled: true, textScale: 1 },
   };

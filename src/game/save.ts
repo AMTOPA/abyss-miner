@@ -159,6 +159,7 @@ export function normalizeSave(raw: unknown): SaveData {
         total: clampNum(ch.total, 0, 1e6, 0),
       };
     })(),
+    achievements: Array.isArray(r.achievements) ? (r.achievements as unknown[]).filter((x) => typeof x === "string") as string[] : [],
     stats,
     settings: {
       muted: !!((r.settings ?? {}) as Record<string, unknown>).muted,

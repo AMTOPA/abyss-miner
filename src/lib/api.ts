@@ -4,7 +4,7 @@ const API_BASE = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
 const api = (p: string) => `${API_BASE}${p}`;
 
 export type AuthUser = { id: number; username: string };
-export type ScoreKind = "value" | "depth" | "hardcore" | "net";
+export type ScoreKind = "value" | "depth" | "hardcore" | "net" | "daily";
 export type LeaderboardRow = {
   rank: number;
   username: string;
@@ -17,7 +17,7 @@ export type LeaderboardRow = {
 };
 export type LeaderboardMe = Omit<LeaderboardRow, "rank">;
 export type ScoreBest = Omit<LeaderboardMe, "username">;
-export type LeaderboardData = { list: LeaderboardRow[]; me: LeaderboardMe | null };
+export type LeaderboardData = { list: LeaderboardRow[]; me: LeaderboardMe | null; day?: string | null };
 
 async function readJson<T>(res: Response): Promise<T> {
   const data = (await res.json().catch(() => ({}))) as T & { error?: string };
@@ -51,8 +51,9 @@ export async function apiMe(): Promise<{ user: AuthUser | null }> {
   return readJson(res);
 }
 
-export async function apiLeaderboard(limit = 50, kind: ScoreKind = "value"): Promise<LeaderboardData> {
+export async function apiLeaderboard(limit = 50, kind: ScoreKind = "value", day?: string): Promise<LeaderboardData> {
   const params = new URLSearchParams({ limit: String(limit), kind });
+  if (day) params.set("day", day);
   const res = await fetch(`${api("/api/leaderboard")}?${params.toString()}`);
   return readJson(res);
 }
@@ -76,7 +77,7 @@ export async function apiSubmitScore(
   runId: string,
   runValue: number,
   depth: number,
-  opts: { net: number; difficulty: "mild" | "normal" | "hardcore" }
+  opts: { net: number; difficulty: "mild" | "normal" | "hardcore"; dailyDay?: string }
 ): Promise<{ ok: true; best: ScoreBest; inserted: number }> {
-  return post(api("/api/leaderboard"), { runId, runValue, depth, net: opts.net, difficulty: opts.difficulty });
+  return post(api("/api/leaderboard"), { runId, runValue, depth, net: opts.net, difficulty: opts.difficulty, dailyDay: opts.dailyDay ?? undefined });
 }

@@ -84,7 +84,7 @@ describe("v10 ?????????", () => {
     expect(s1.settings.textScale).toBe(1.25);
     const s2 = normalizeSave({ ...defaultSave(), settings: { shakeEnabled: true, textScale: 7 } } as unknown);
     expect(s2.settings.shakeEnabled).toBe(true);
-    expect(s2.settings.textScale).toBe(1); // ???????
+    expect(s2.settings.textScale).toBe(1);
   });
 
   it("normalizeSave ??? checkin ??", () => {
@@ -93,17 +93,16 @@ describe("v10 ?????????", () => {
     const s2 = normalizeSave({ ...defaultSave(), checkin: { date: 42, streak: -5, total: 1e9 } } as unknown);
     expect(s2.checkin.date).toBe("");
     expect(s2.checkin.streak).toBe(0);
-    expect(s2.checkin.total).toBe(1e6); // ????
+    expect(s2.checkin.total).toBe(1e6);
   });
 });
 
-describe("v10 ??????", () => {
+describe("v10 背景自动暂停", () => {
   it("????????????????????", () => {
-    // ??? document?hidden ?? + ?? visibilitychange ??
-    let visCb: (() => void) | null = null;
+    let visHandler: (() => void) | undefined;
     const doc: Record<string, unknown> = { _h: false };
     Object.defineProperty(doc, "hidden", { get: () => doc._h });
-    doc.addEventListener = (_t: string, cb: () => void) => { visCb = cb; };
+    doc.addEventListener = (_t: string, cb: () => void) => { visHandler = cb; };
     doc.removeEventListener = () => {};
     vi.stubGlobal("document", doc);
 
@@ -112,20 +111,17 @@ describe("v10 ??????", () => {
     const { game } = makeEngine(save, config);
     game.startRun(0, save, config);
 
-    // ??????????descending?
     let snap = game.captureRunState() as unknown as { phase: string; depth: number };
     expect(snap.phase).toBe("descending");
 
-    // ?????????? 3 ???????????????
     doc._h = true;
-    visCb?.();
+    if (visHandler) visHandler();
     advance(3);
     snap = game.captureRunState() as unknown as { phase: string; depth: number };
     expect(snap.phase).toBe("descending");
 
-    // ???????????? observe
     doc._h = false;
-    visCb?.();
+    if (visHandler) visHandler();
     advance(2);
     snap = game.captureRunState() as unknown as { phase: string; depth: number };
     if (snap.phase === "anomaly") (game as unknown as { anomalyContinue(): void }).anomalyContinue();

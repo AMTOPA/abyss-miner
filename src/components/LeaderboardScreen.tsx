@@ -17,6 +17,7 @@ const TABS: Tab[] = [
   { kind: "depth", label: "最深榜", hint: "按单次下矿到达深度排名" },
   { kind: "hardcore", label: "硬核榜", hint: "仅统计硬核模式的单次入库价值" },
   { kind: "net", label: "净收益榜", hint: "按单次下矿净收益排名" },
+  { kind: "daily", label: "每日榜", hint: "今日每日挑战（UTC 日期固定种子）成绩排名" },
 ];
 
 function displayBest(value: number, kind: ScoreKind): string {
@@ -44,7 +45,7 @@ export default function LeaderboardScreen({ onClose }: Props) {
     setData(null);
     setError(null);
 
-    apiLeaderboard(50, kind)
+    apiLeaderboard(50, kind, kind === "daily" ? new Date().toISOString().slice(0, 10) : undefined)
       .then((next) => {
         if (active) setData(next);
       })

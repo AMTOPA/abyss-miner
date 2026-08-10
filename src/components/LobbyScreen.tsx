@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ARCHETYPES, ARCHETYPE_ORDER, CHALLENGE_DEFS, CHALLENGE_ORDER } from "@/game/content";
 import { CHECKPOINTS, checkpointCost, fmt, persistSave, type SaveData } from "@/game/config";
+import { dailyDateUTC } from "@/game/daily";
 import type { AuthUser } from "@/lib/api";
 import type { ArchetypeId, ChallengeId, DisasterMode, RunConfig } from "@/game/types";
 import {
@@ -12,6 +13,7 @@ import {
   EQUIPMENT_DEFS, EQUIPMENT_SLOT_NAMES, type EquipmentSlot,
   type EquipmentStats, mergeEquipStats,
 } from "@/game/items";
+import AchievementsPanel from "./AchievementsPanel";
 import CodexPanel from "./CodexPanel";
 import ForgePanel from "./ForgePanel";
 import LoadoutPanel from "./LoadoutPanel";
@@ -19,7 +21,7 @@ import ShopPanel from "./ShopPanel";
 import WarehousePanel from "./WarehousePanel";
 import Tip from "./Tip";
 
-export type LobbyTab = "deploy" | "warehouse" | "shop" | "loadout" | "forge" | "codex" | "leaderboard" | "settings";
+export type LobbyTab = "deploy" | "warehouse" | "shop" | "loadout" | "forge" | "codex" | "leaderboard" | "achievements" | "settings";
 export type LobbyProps = {
   save: SaveData;
   user: AuthUser | null;
@@ -28,6 +30,7 @@ export type LobbyProps = {
   onVolume: (v: number) => void;
   onToggleMute: () => void;
   onStart: (startDepth: number, config: RunConfig, cost: number) => void;
+  onDailyChallenge: () => void; // v11?????
   // v9：断局续玩
   resumeRun: { depth: number; pocket: number } | null;
   onResume: () => void;
@@ -51,6 +54,7 @@ const TABS: Array<{ id: LobbyTab; name: string; icon: string }> = [
   { id: "forge", name: "锻造", icon: "🔨" },
   { id: "codex", name: "图鉴", icon: "📖" },
   { id: "leaderboard", name: "排行榜", icon: "🏆" },
+  { id: "achievements", name: "成就", icon: "??" },
   { id: "settings", name: "设置", icon: "⚙️" },
 ];
 const EQUIP_SLOTS: EquipmentSlot[] = ["drill", "pack", "armor", "detector", "charm"];
@@ -247,6 +251,15 @@ export default function LobbyScreen(props: LobbyProps) {
 
   const renderDeploy = () => (
     <div className="deploy-page-v4">
+      <div className="daily-challenge-card">
+        <div className="daily-challenge-copy">
+          <span className="daily-challenge-kicker">?? 每日挑战</span>
+          <strong>当日固定种子 · 普通难度 · 无装备/道具/流派 · 初始现金 0</strong>
+          <span>今日种子?{dailyDateUTC()}</span>
+          <span className="daily-challenge-hint">成绩进入每日榜（UTC 日期）??????????</span>
+        </div>
+        <button type="button" className="btn btn-primary btn-big daily-challenge-btn" onClick={props.onDailyChallenge}>? 开始挑战</button>
+      </div>
       <div className="quickstart-bar">
         <div className="quickstart-copy">
           <span className="quickstart-kicker">推荐配置</span>
@@ -424,6 +437,7 @@ const renderSettings = () => (
         {tab === "forge" && <ForgePanel save={save} onSave={onSave} />}
         {tab === "codex" && <CodexPanel save={save} onSave={onSave} />}
         {tab === "leaderboard" && renderLeaderboard()}
+        {tab === "achievements" && <AchievementsPanel save={save} onSave={onSave} />}
         {tab === "settings" && renderSettings()}
       </div>
     </div>

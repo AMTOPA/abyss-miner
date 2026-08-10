@@ -64,6 +64,22 @@ export const EQUIP_RECIPES: ForgeRecipe[] = [
   equip("forge_charm_2", "精雕圣印", "🦉", "charm", [2, 3],
     [{ ore: "gold", quality: "fine", count: 3 }, { ore: "crystal", quality: "normal", count: 1 }], 300,
     "随机锻制一件高品质护符（精良~极品）"),
+  // ?????????????
+  equip("forge_drill_3", "深渊钻核", "??", "drill", [3, 3],
+    [{ ore: "diamond", quality: "legendary", count: 3 }, { ore: "crystal", quality: "legendary", count: 2 }], 1200,
+    "消耗传说级矿石，锻制一柄极品钻头"),
+  equip("forge_pack_3", "次元货舱", "??", "pack", [3, 3],
+    [{ ore: "crystal", quality: "legendary", count: 3 }, { ore: "silver", quality: "legendary", count: 3 }], 1200,
+    "消耗传说级矿石，锻制一件极品背包"),
+  equip("forge_armor_3", "龙鳞战甲", "??", "armor", [3, 3],
+    [{ ore: "diamond", quality: "legendary", count: 3 }, { ore: "gold", quality: "legendary", count: 3 }], 1300,
+    "消耗传说级矿石，锻制一件极品护甲"),
+  equip("forge_detector_3", "深渊之眼", "???", "detector", [3, 3],
+    [{ ore: "crystal", quality: "legendary", count: 3 }, { ore: "diamond", quality: "legendary", count: 2 }], 1250,
+    "消耗传说级矿石，锻制一件极品探测器"),
+  equip("forge_charm_3", "宇宙辉印", "??", "charm", [3, 3],
+    [{ ore: "gold", quality: "legendary", count: 3 }, { ore: "crystal", quality: "legendary", count: 2 }], 1350,
+    "消耗传说级矿石，锻制一件极品护符"),
 ];
 
 // ---------------- 消耗品配方（复用 CRAFTING） ----------------

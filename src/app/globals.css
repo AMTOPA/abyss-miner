@@ -3085,3 +3085,54 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
 .checkin-info { display: inline-flex; align-items: center; gap: 4px; }
 .checkin-info strong { color: #ffd166; font-size: 15px; }
 .checkin-done { color: #7fd98a; font-weight: 700; }
+
+/* ---------- v11?????? ---------- */
+.daily-challenge-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0 0 12px;
+  padding: 14px 18px;
+  background:
+    radial-gradient(120% 160% at 0% 0%, rgba(120, 90, 255, 0.18), transparent 55%),
+    linear-gradient(160deg, rgba(40, 30, 74, 0.6), rgba(18, 14, 34, 0.62));
+  border: 1px solid rgba(150, 120, 255, 0.45);
+  border-radius: 14px;
+  box-shadow: 0 0 26px rgba(120, 90, 255, 0.15);
+}
+.daily-challenge-copy { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: #cdd6f4; }
+.daily-challenge-kicker { font-size: 15px; font-weight: 800; letter-spacing: 1px; color: #c9b6ff; }
+.daily-challenge-copy strong { font-size: 13.5px; color: #ece4ff; }
+.daily-challenge-hint { color: #8f86b8; font-size: 12px; }
+.daily-challenge-btn { flex: 0 0 auto; }
+
+/* ---------- v11????? ---------- */
+.ach-panel { display: flex; flex-direction: column; gap: 12px; }
+.ach-summary { font-size: 13px; color: #b9c4de; padding: 8px 4px 0; }
+.ach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+.ach-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.ach-card.done { border-color: rgba(240, 190, 90, 0.55); background: linear-gradient(160deg, rgba(60, 44, 16, 0.4), rgba(24, 18, 8, 0.4)); }
+.ach-card.claimed { opacity: 0.62; }
+.ach-icon { font-size: 24px; line-height: 1; }
+.ach-info { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.ach-info strong { font-size: 13px; color: var(--text); }
+.ach-info small { font-size: 11px; color: #8b96b4; line-height: 1.35; }
+.ach-meta { font-size: 11px; color: #a8b4d0; }
+.ach-progress { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.ach-progress-fill { display: block; height: 100%; background: linear-gradient(90deg, #5fc98f, #f4c063); }
+.ach-claimed-tag { font-size: 12px; color: #7fd98a; font-weight: 700; white-space: nowrap; }

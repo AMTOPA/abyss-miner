@@ -33,10 +33,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "排行榜类型无效" }, { status: 400 });
   }
 
-  const list = getLeaderboard(limit, kindParam);
+  // v11??????? UTC ????????????
+  let dayFilter: string | undefined;
+  if (kindParam === "daily") {
+    dayFilter = req.nextUrl.searchParams.get("day") || new Date().toISOString().slice(0, 10);
+  }
+  const list = getLeaderboard(limit, kindParam, dayFilter);
   const me = await getCurrentUser();
   const myBest = me ? getUserBest(me.id, kindParam) : null;
-  return NextResponse.json({ list, me: me ? { username: me.username, ...myBest } : null });
+  return NextResponse.json({ list, me: me ? { username: me.username, ...myBest } : null, day: dayFilter ?? null });
 }
 
 export async function POST(req: NextRequest) {
@@ -99,9 +104,16 @@ export async function POST(req: NextRequest) {
   }
 
   const difficulty = difficultyRaw as Difficulty;
+  // v11????????????????runId ?? daily-<date>-????????
+  const dailyDay = typeof body.dailyDay === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.dailyDay) ? body.dailyDay : null;
   let inserted = 0;
-  for (const kind of kindsFor(difficulty)) {
-    if (addScoreIdempotent(user.id, runValue, depth, runId, kind, kind === "net" ? net : runValue)) inserted++;
+  if (dailyDay) {
+    const dailyRunId = `daily-${dailyDay}-${runId}`;
+    if (addScoreIdempotent(user.id, runValue, depth, dailyRunId, "daily", runValue)) inserted++;
+  } else {
+    for (const kind of kindsFor(difficulty)) {
+      if (addScoreIdempotent(user.id, runValue, depth, runId, kind, kind === "net" ? net : runValue)) inserted++;
+    }
   }
   // 该局若已存在（重复 runId），视为幂等成功，不重复计数
   const best = getUserBest(user.id, "value");

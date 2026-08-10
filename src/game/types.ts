@@ -47,6 +47,7 @@ export type RunConfig = {
   seed: string;                  // 本局种子（每日挑战/固定种子用）
   challenge: ChallengeId[];      // 挑战词缀
   disasterMode: DisasterMode;      // 灾难模式：累计值 / 随机概率
+  dailyChallenge?: boolean;        // v11: daily challenge flag (fixed seed + uniform rules)
 };
 
 // ================= v4：流派 =================
