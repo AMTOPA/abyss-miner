@@ -88,6 +88,10 @@ export async function POST(req: NextRequest) {
   ) {
     return NextResponse.json({ error: "净收益数据无效" }, { status: 400 });
   }
+  // v9 防作弊：净收益 = 入库价值 - 出发花费（花费 ≥ 0），不可能大于入库价值
+  if (net > runValue) {
+    return NextResponse.json({ error: "成绩数据不合理（净收益超过入库价值）" }, { status: 400 });
+  }
 
   // 每小时最多 20 次成功提交；重复 runId 不会新增计数。
   if (countRecentScores(user.id, Date.now() - RATE_WINDOW_MS) >= RATE_MAX) {

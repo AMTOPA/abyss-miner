@@ -6,6 +6,11 @@
 import { chromium } from "playwright";
 
 const BASE = "http://localhost:3000";
+// v9：E2E 数据库隔离提醒 —— 未设置 ABYSS_DB_PATH 时可能写入生产 data/game.db
+if (!process.env.ABYSS_DB_PATH) {
+  console.log("[warn] ABYSS_DB_PATH 未设置：E2E 可能写入生产 data/game.db，建议通过 run-e2e.ps1 运行");
+}
+
 const ROUNDS = Number(process.env.PEN_ROUNDS) || 40;
 const MAX_RESTARTS = 40;
 

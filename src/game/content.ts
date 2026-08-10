@@ -323,13 +323,16 @@ export const CRAFTING: Record<string, {
 
 // ================= 黑市订单 =================
 
-export const ORDERS: Record<string, {
+export type OrderNeed = { ore: string; quality: string; count: number };
+export type OrderDef = {
   name: string;
   icon: string;
   desc: string;
-  need: Array<{ ore: string; quality: string; count: number }>;
+  need: OrderNeed[];
   reward: { cash: number; favor?: number };
-}> = {
+};
+
+export const ORDERS: Record<string, OrderDef> = {
   copper_wiring: {
     name: "铜线订单",
     icon: "🔌",
@@ -379,6 +382,37 @@ export const ORDERS: Record<string, {
     reward: { cash: 145000, favor: 3 },
   },
 };
+
+export const ORDER_IDS = Object.keys(ORDERS);
+
+// v9：每日随机 3 单（同一日期稳定），在仓库交付后结算现金/好感度
+function seededRand(seed: string): () => number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return () => {
+    h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h >>>= 0;
+    return (h % 10000) / 10000;
+  };
+}
+
+export function dailyOrders(date: string): string[] {
+  const rnd = seededRand("orders_" + date);
+  const ids = [...ORDER_IDS];
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return ids.slice(0, 3);
+}
+
+export function ensureDailyOrders(saveOrders: { date: string; active: string[]; done: string[] }, today: string): { date: string; active: string[]; done: string[] } {
+  if (saveOrders.date === today) return saveOrders;
+  return { date: today, active: dailyOrders(today), done: [] };
+}
+
 
 // ================= 区域机制 =================
 
@@ -453,4 +487,3 @@ export const REGION_DEFS: Record<StageId, {
     ],
   },
 };
-

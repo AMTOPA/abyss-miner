@@ -1,8 +1,9 @@
 // ---------- 引擎 <-> UI 契约（v4：信息分层 / 节点地图 / 房间 / 流派 / 模块） ----------
 import type { SaveData, StageId } from "./config";
 import type {
-  OreQuality, Difficulty, BuffId, EquipmentInstance, BmStockItem, Rating,
+  OreQuality, Difficulty, BuffId, EquipmentInstance, BmStockItem, EquipmentStats, Rating,
 } from "./items";
+import type { Layer } from "./world";
 
 export type DisasterMode = "gauge" | "random";
 
@@ -178,6 +179,12 @@ export type BlackMarketView = {
   repairPct: number;
   favor: number;
   tasks: DailyTaskView[];
+  // v9：本日订单（回到地面后在仓库交付，交付消耗仓库矿石）
+  orders: Array<{
+    id: string; name: string; icon: string; desc: string;
+    need: Array<{ ore: string; quality: string; count: number }>;
+    rewardCash: number; rewardFavor: number; done: boolean;
+  }>;
   pocket: number;
   slots: number;
   usedSlots: number;
@@ -270,6 +277,121 @@ export type RunResult = {
   bonus: number;
   difficulty: Difficulty; // v7：用于排行榜硬核榜资格
   save: SaveData;
+  recovered?: boolean;  // v9：断局续玩恢复的远征（不上排行榜）
 };
 
 export type EngineCallbacks = { onUi: (snap: UiSnapshot) => void; onRunEnd: (result: RunResult) => void };
+
+// ================= v9：断局续玩（RunStateSnapshot） =================
+// 序列化一局远征的完整逻辑状态：浏览器刷新/关闭后可恢复继续。
+// 恢复的远征标记 recovered=true，不上排行榜（避免重复提交/作弊）。
+export type RunStateSnapshot = {
+  version: 1;
+  save: SaveData;            // 局内已持久化的最新存档（好感度/检查点变更）
+  config: RunConfig;
+  rngCount: number;          // 本局主 RNG 已消耗次数（种子局可精确续玩）
+  phase: RunPhase;
+  depth: number;
+  layer: Layer | null;
+  previewLayer: Layer | null;
+  power: number; maxPower: number;
+  durability: number; maxDurability: number;
+  overheat: number;
+  combo: number;
+  supports: number;
+  detectors: number;
+  slots: number;
+  bag: BagSlot[];
+  loadValue: number;
+  pocket: number;
+  difficulty: Difficulty;
+  buffs: BuffId[];
+  gasImmune: boolean;
+  shieldActive: boolean;
+  disasterGuardLayers: number;
+  disasterMode: DisasterMode;
+  disasterGauge: number;
+  gaugeGainMult: number;
+  evacAvailable: boolean;
+  evacSpecial: boolean;
+  evacCost: number;
+  evacSuppliedDepth: number;
+  pierceBuff: number;
+  qualityBonus: number;
+  valueBonus: number;
+  wearReduce: number;
+  banditReduce: number;
+  canBlackMarket: boolean;
+  bmStock: BmStockItem[];
+  bmGenerated: boolean;
+  bmEncounterDepth: number;
+  milkCount: number;
+  supportsUsedThisLayer: boolean;
+  retreatBlocked: number;
+  anomalyDouble: boolean;
+  anomalyDoubleLoss: boolean;
+  detectorDisabled: boolean;
+  megaShieldUsed: boolean;
+  nextTransparent: boolean;
+  banditSeverity: number;
+  runEnded: boolean;
+  minedThisRun: number;
+  scaredThisRun: number;
+  lastResult: UiSnapshot["result"] | null;
+  resultOres: BagSlot[];
+  runPendingEquipment: EquipmentInstance[];
+  archetype: ArchetypeId | null;
+  challenge: ChallengeId[];
+  modules: ModuleId[];
+  traits: string[];   // 装备规则特性（TraitId，存为字符串避免循环依赖）
+  seed: string;
+  revealLevel: RevealLevel;
+  cautiousCooldown: number;
+  standardStopped: boolean;
+  drillHeat: number;
+  creatureImmune: number;
+  heatGainMult: number;
+  riskReduce: number;
+  qualityBoostRun: number;
+  stackCap: number;
+  overloadGainBonus: number;
+  overloadRiskMult: number;
+  pierceCapBonus: number;
+  baitAvoid: number;
+  autoCompress: boolean;
+  revealQualityAuto: boolean;
+  gasConvert: boolean;
+  shieldModuleUsed: boolean;
+  routeBuff: { qualityShift: number; riskShift: number; layersLeft: number; roomBoost?: number } | null;
+  visitedRooms: string[];
+  baseBuilt: Record<string, boolean>;
+  bossState: { id: string; name: string; hp: number; maxHp: number } | null;
+  overloadUsedThisRun: number;
+  anomalySeenThisRun: number;
+  evacGuaranteed: boolean;
+  creditUsed: boolean;
+  moduleMilestoneDone: number[];
+  bmDiscountRun: number;
+  nextSlotId: number;
+  roomView: RoomView | null;
+  routeOptions: RouteChoice[] | null;
+  moduleOptions: ModuleChoice[] | null;
+  baseView: ForwardBaseView | null;
+  pocketDim: boolean;
+  luckyPick: number;
+  doubleDip: boolean;
+  ghostBit: boolean;
+  scrapArmor: boolean;
+  staticCoil: boolean;
+  moltenHeart: boolean;
+  overclockChip: boolean;
+  echoLens: boolean;
+  detectorBonusRun: number;
+  accuracyBonusRun: number;
+  slotBonusRun: number;
+  anomalyResistRun: number;
+  gameoverInfo: UiSnapshot["gameover"] | null;
+  surfacedInfo: UiSnapshot["surfaced"] | null;
+  log: LogEntry[];
+  equipStats: EquipmentStats;
+};

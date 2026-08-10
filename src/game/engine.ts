@@ -7,7 +7,7 @@ import type { OreId, OreStack, SaveData } from "./config";
 import {
   Layer, VEIN_NAME, collapseRiskLabel as wcRiskLabel, generateLayer, hazardName, overloadOrePool, rollOreYield, upgradeQuality,
 } from "./world";
-import { ARCHETYPES, CHALLENGE_DEFS, ROOMS, ROOM_ORDER, MODULE_POOL, pickModules } from "./content";
+import { ARCHETYPES, CHALLENGE_DEFS, ROOMS, ROOM_ORDER, MODULE_POOL, ORDERS, ensureDailyOrders, pickModules } from "./content";
 import type { TraitId } from "./content";
 import {
   CONSUMABLES, DIFFICULTY_DEFS, EMPTY_EQUIP_STATS, EQUIPMENT_DEFS,
@@ -21,7 +21,7 @@ import type {
 import type {
   ArchetypeId, BagSlot, BlackMarketView, BossView, ChallengeId, DailyTaskView, DisasterMode,
   EngineCallbacks, EvacInfo, ForwardBaseView, LogEntry, ModuleChoice, ModuleId, RevealLevel,
-  RiskRange, RoomId, RoomView, RouteChoice, RunConfig, RunPhase, RunResult, UiSnapshot,
+  RiskRange, RoomId, RoomView, RouteChoice, RunConfig, RunPhase, RunResult, RunStateSnapshot, UiSnapshot,
 } from "./types";
 import { AudioEngine } from "./audio";
 
@@ -146,6 +146,8 @@ export class MinerGame {
   private traits: TraitId[] = [];
   private seed = "";
   private rnd: () => number = Math.random;   // 本局随机源（种子可复现）
+  private rndCount = 0;                        // v9：主 RNG 已消耗次数（断局续玩）
+  private recoveredRun = false;                  // v9：本局是否为断局续玩恢复（恢复局不上榜）
   private revealLevel: RevealLevel = "none";
   private cautiousCooldown = 0;              // 稳妥模式冷却剩余层数
   private standardStopped = false;           // 本层标准模式是否已收手
@@ -260,7 +262,9 @@ export class MinerGame {
     this.archetype = config.archetype ?? null;
     this.challenge = [...config.challenge];
     this.seed = config.seed || "";
-    this.rnd = this.seed ? mulberry32(hashSeed(this.seed)) : Math.random;
+    this.rndCount = 0;
+    const rawRnd = this.seed ? mulberry32(hashSeed(this.seed)) : null;
+    this.rnd = rawRnd ? () => { this.rndCount++; return rawRnd(); } : Math.random;
     this.modules = [];
     this.traits = [];
     this.depth = startDepth;
@@ -276,6 +280,7 @@ export class MinerGame {
     this.disasterGuardLayers = 0;
     this.nextTransparent = false;
     this.runEnded = false;
+    this.recoveredRun = false;
     this.reduceMotion = !!save.settings?.reduceMotion;
     this.minedThisRun = 0;
     this.scaredThisRun = 0;
@@ -303,7 +308,8 @@ export class MinerGame {
     this.heatGainMult = 1;
     this.riskReduce = 0;
     this.qualityBoostRun = 0;
-    this.stackCap = 99;
+    // v9：图鉴研究 —— 总研究等级提升堆叠上限（最高 +40）
+    this.stackCap = 99 + Math.min(40, this.totalResearchLevels());
     this.overloadGainBonus = 0;
     this.overloadRiskMult = 1;
     this.pierceCapBonus = 0;
@@ -421,6 +427,261 @@ export class MinerGame {
     this.pushUi();
     this.audio.play("ambient");
     this.logAdd(`升降机抵达 ${startDepth}m，准备下矿`, "info");
+  }
+
+  // ================= v9：断局续玩 =================
+  captureRunState(): RunStateSnapshot {
+    return {
+      version: 1,
+      save: this.save,
+      config: { ...this.config },
+      rngCount: this.rndCount,
+      phase: this.phase,
+      depth: this.depth,
+      layer: this.layer,
+      previewLayer: this.previewLayer,
+      power: this.power, maxPower: this.maxPower,
+      durability: this.durability, maxDurability: this.maxDurability,
+      overheat: this.overheat,
+      combo: this.combo,
+      supports: this.supports,
+      detectors: this.detectors,
+      slots: this.slots,
+      bag: this.bag.map((s) => ({ ...s })),
+      loadValue: this.loadValue,
+      pocket: this.pocket,
+      difficulty: this.difficulty,
+      buffs: [...this.buffs],
+      gasImmune: this.gasImmune,
+      shieldActive: this.shieldActive,
+      disasterGuardLayers: this.disasterGuardLayers,
+      disasterMode: this.disasterMode,
+      disasterGauge: this.disasterGauge,
+      gaugeGainMult: this.gaugeGainMult,
+      evacAvailable: this.evacAvailable,
+      evacSpecial: this.evacSpecial,
+      evacCost: this.evacCost,
+      evacSuppliedDepth: this.evacSuppliedDepth,
+      pierceBuff: this.pierceBuff,
+      qualityBonus: this.qualityBonus,
+      valueBonus: this.valueBonus,
+      wearReduce: this.wearReduce,
+      banditReduce: this.banditReduce,
+      canBlackMarket: this.canBlackMarket,
+      bmStock: this.bmStock.map((s) => ({ ...s })),
+      bmGenerated: this.bmGenerated,
+      bmEncounterDepth: this.bmEncounterDepth,
+      milkCount: this.milkCount,
+      supportsUsedThisLayer: this.supportsUsedThisLayer,
+      retreatBlocked: this.retreatBlocked,
+      anomalyDouble: this.anomalyDouble,
+      anomalyDoubleLoss: this.anomalyDoubleLoss,
+      detectorDisabled: this.detectorDisabled,
+      megaShieldUsed: this.megaShieldUsed,
+      nextTransparent: this.nextTransparent,
+      banditSeverity: this.banditSeverity,
+      runEnded: this.runEnded,
+      minedThisRun: this.minedThisRun,
+      scaredThisRun: this.scaredThisRun,
+      lastResult: this.lastResult,
+      resultOres: this.resultOres.map((s) => ({ ...s })),
+      runPendingEquipment: this.runPendingEquipment.map((e) => ({ ...e, stats: { ...e.stats } })),
+      archetype: this.archetype,
+      challenge: [...this.challenge],
+      modules: [...this.modules],
+      traits: [...this.traits],
+      seed: this.seed,
+      revealLevel: this.revealLevel,
+      cautiousCooldown: this.cautiousCooldown,
+      standardStopped: this.standardStopped,
+      drillHeat: this.drillHeat,
+      creatureImmune: this.creatureImmune,
+      heatGainMult: this.heatGainMult,
+      riskReduce: this.riskReduce,
+      qualityBoostRun: this.qualityBoostRun,
+      stackCap: this.stackCap,
+      overloadGainBonus: this.overloadGainBonus,
+      overloadRiskMult: this.overloadRiskMult,
+      pierceCapBonus: this.pierceCapBonus,
+      baitAvoid: this.baitAvoid,
+      autoCompress: this.autoCompress,
+      revealQualityAuto: this.revealQualityAuto,
+      gasConvert: this.gasConvert,
+      shieldModuleUsed: this.shieldModuleUsed,
+      routeBuff: this.routeBuff ? { ...this.routeBuff } : null,
+      visitedRooms: [...this.visitedRooms],
+      baseBuilt: { ...this.baseBuilt },
+      bossState: this.bossState ? { ...this.bossState } : null,
+      overloadUsedThisRun: this.overloadUsedThisRun,
+      anomalySeenThisRun: this.anomalySeenThisRun,
+      evacGuaranteed: this.evacGuaranteed,
+      creditUsed: this.creditUsed,
+      moduleMilestoneDone: [...this.moduleMilestoneDone],
+      bmDiscountRun: this.bmDiscountRun,
+      nextSlotId: this.nextSlotId,
+      roomView: this.roomView ? { ...this.roomView, options: this.roomView.options.map((o) => ({ ...o })) } : null,
+      routeOptions: this.routeOptions?.map((r) => ({ ...r })) ?? null,
+      moduleOptions: this.moduleOptions?.map((m) => ({ ...m })) ?? null,
+      baseView: this.baseView ? { ...this.baseView, needOre: this.baseView.needOre ? { ...this.baseView.needOre } : null, options: this.baseView.options.map((o) => ({ ...o })) } : null,
+      pocketDim: this.pocketDim,
+      luckyPick: this.luckyPick,
+      doubleDip: this.doubleDip,
+      ghostBit: this.ghostBit,
+      scrapArmor: this.scrapArmor,
+      staticCoil: this.staticCoil,
+      moltenHeart: this.moltenHeart,
+      overclockChip: this.overclockChip,
+      echoLens: this.echoLens,
+      detectorBonusRun: this.detectorBonusRun,
+      accuracyBonusRun: this.accuracyBonusRun,
+      slotBonusRun: this.slotBonusRun,
+      anomalyResistRun: this.anomalyResistRun,
+      gameoverInfo: this.gameoverInfo,
+      surfacedInfo: this.surfacedInfo,
+      log: this.log.map((l) => ({ ...l })),
+      equipStats: { ...this.equipStats },
+    };
+  }
+
+  restoreRunState(snap: RunStateSnapshot): void {
+    // 逻辑状态恢复（覆盖 startRun 的初始状态）
+    this.save = snap.save;
+    this.config = { ...snap.config };
+    this.difficulty = snap.difficulty;
+    this.recoveredRun = true; // v9：恢复局标记（不上榜）
+    this.pocket = snap.pocket;
+    this.buffs = [...snap.buffs];
+    this.archetype = snap.archetype;
+    this.challenge = [...snap.challenge];
+    this.seed = snap.seed;
+    // 重建 RNG：同一种子 + 已消耗次数 -> 后续完全确定（断局续玩不改变世界）
+    this.rndCount = snap.rngCount;
+    const rawRnd = this.seed ? mulberry32(hashSeed(this.seed)) : null;
+    if (rawRnd) {
+      for (let i = 0; i < this.rndCount; i++) rawRnd();
+      this.rnd = () => { this.rndCount++; return rawRnd(); };
+    } else {
+      this.rnd = Math.random;
+    }
+    this.modules = [...snap.modules];
+    this.traits = [...snap.traits] as TraitId[];
+    this.depth = snap.depth;
+    this.depthDisplay = snap.depth;
+    this.phase = snap.phase;
+    this.layer = snap.layer;
+    this.previewLayer = snap.previewLayer;
+    this.power = snap.power; this.maxPower = snap.maxPower;
+    this.durability = snap.durability; this.maxDurability = snap.maxDurability;
+    this.overheat = snap.overheat;
+    this.combo = snap.combo;
+    this.supports = snap.supports;
+    this.detectors = snap.detectors;
+    this.slots = snap.slots;
+    this.bag = snap.bag.map((s) => ({ ...s }));
+    this.loadValue = snap.loadValue;
+    this.gasImmune = snap.gasImmune;
+    this.shieldActive = snap.shieldActive;
+    this.disasterGuardLayers = snap.disasterGuardLayers;
+    this.disasterMode = snap.disasterMode;
+    this.disasterGauge = snap.disasterGauge;
+    this.gaugeGainMult = snap.gaugeGainMult;
+    this.evacAvailable = snap.evacAvailable;
+    this.evacSpecial = snap.evacSpecial;
+    this.evacCost = snap.evacCost;
+    this.evacSuppliedDepth = snap.evacSuppliedDepth;
+    this.pierceBuff = snap.pierceBuff;
+    this.qualityBonus = snap.qualityBonus;
+    this.valueBonus = snap.valueBonus;
+    this.wearReduce = snap.wearReduce;
+    this.banditReduce = snap.banditReduce;
+    this.canBlackMarket = snap.canBlackMarket;
+    this.bmStock = snap.bmStock.map((s) => ({ ...s }));
+    this.bmGenerated = snap.bmGenerated;
+    this.bmEncounterDepth = snap.bmEncounterDepth;
+    this.milkCount = snap.milkCount;
+    this.supportsUsedThisLayer = snap.supportsUsedThisLayer;
+    this.retreatBlocked = snap.retreatBlocked;
+    this.anomalyDouble = snap.anomalyDouble;
+    this.anomalyDoubleLoss = snap.anomalyDoubleLoss;
+    this.detectorDisabled = snap.detectorDisabled;
+    this.megaShieldUsed = snap.megaShieldUsed;
+    this.nextTransparent = snap.nextTransparent;
+    this.banditSeverity = snap.banditSeverity;
+    this.runEnded = snap.runEnded;
+    this.minedThisRun = snap.minedThisRun;
+    this.scaredThisRun = snap.scaredThisRun;
+    this.lastResult = snap.lastResult;
+    this.resultOres = snap.resultOres.map((s) => ({ ...s }));
+    this.runPendingEquipment = snap.runPendingEquipment.map((e) => ({ ...e, stats: { ...e.stats } }));
+    this.revealLevel = snap.revealLevel;
+    this.cautiousCooldown = snap.cautiousCooldown;
+    this.standardStopped = snap.standardStopped;
+    this.drillHeat = snap.drillHeat;
+    this.creatureImmune = snap.creatureImmune;
+    this.heatGainMult = snap.heatGainMult;
+    this.riskReduce = snap.riskReduce;
+    this.qualityBoostRun = snap.qualityBoostRun;
+    this.stackCap = snap.stackCap;
+    this.overloadGainBonus = snap.overloadGainBonus;
+    this.overloadRiskMult = snap.overloadRiskMult;
+    this.pierceCapBonus = snap.pierceCapBonus;
+    this.baitAvoid = snap.baitAvoid;
+    this.autoCompress = snap.autoCompress;
+    this.revealQualityAuto = snap.revealQualityAuto;
+    this.gasConvert = snap.gasConvert;
+    this.shieldModuleUsed = snap.shieldModuleUsed;
+    this.routeBuff = snap.routeBuff ? { ...snap.routeBuff } : null;
+    this.visitedRooms = [...snap.visitedRooms];
+    this.baseBuilt = { ...snap.baseBuilt };
+    this.bossState = snap.bossState ? { ...snap.bossState } : null;
+    this.overloadUsedThisRun = snap.overloadUsedThisRun;
+    this.anomalySeenThisRun = snap.anomalySeenThisRun;
+    this.evacGuaranteed = snap.evacGuaranteed;
+    this.creditUsed = snap.creditUsed;
+    this.moduleMilestoneDone = [...snap.moduleMilestoneDone];
+    this.bmDiscountRun = snap.bmDiscountRun;
+    this.nextSlotId = snap.nextSlotId;
+    this.roomView = snap.roomView ? { ...snap.roomView, options: snap.roomView.options.map((o) => ({ ...o })) } : null;
+    this.routeOptions = snap.routeOptions?.map((r) => ({ ...r })) ?? null;
+    this.moduleOptions = snap.moduleOptions?.map((m) => ({ ...m })) ?? null;
+    this.baseView = snap.baseView ? { ...snap.baseView, needOre: snap.baseView.needOre ? { ...snap.baseView.needOre } : null, options: snap.baseView.options.map((o) => ({ ...o })) } : null;
+    this.pocketDim = snap.pocketDim;
+    this.luckyPick = snap.luckyPick;
+    this.doubleDip = snap.doubleDip;
+    this.ghostBit = snap.ghostBit;
+    this.scrapArmor = snap.scrapArmor;
+    this.staticCoil = snap.staticCoil;
+    this.moltenHeart = snap.moltenHeart;
+    this.overclockChip = snap.overclockChip;
+    this.echoLens = snap.echoLens;
+    this.detectorBonusRun = snap.detectorBonusRun;
+    this.accuracyBonusRun = snap.accuracyBonusRun;
+    this.slotBonusRun = snap.slotBonusRun;
+    this.anomalyResistRun = snap.anomalyResistRun;
+    this.gameoverInfo = snap.gameoverInfo;
+    this.surfacedInfo = snap.surfacedInfo;
+    this.log = snap.log.map((l) => ({ ...l }));
+    this.equipStats = { ...snap.equipStats };
+    this.reduceMotion = !!snap.save.settings?.reduceMotion;
+    // 动画中的阶段（下潜/钻进）无法精确恢复：回到观察层重新决策，不丢失任何已获得资源
+    if (this.phase === "descending" || this.phase === "drilling") {
+      this.phase = "observe";
+      this.drillProgress = 0;
+      this.drillHeat = 0;
+      this.logAdd("重新上线：恢复至当前层观察状态", "info");
+    }
+    // 视觉状态重置
+    this.particles = [];
+    this.floatTexts = [];
+    this.shake = 0;
+    this.flash = 0;
+    this.wallHole = 0;
+    this.rockScroll = 0;
+    this.rockSwoosh = 1;
+    this.oreGlints = [];
+    this.eyes = [];
+    this.audio.play("ambient");
+    this.pushUi();
   }
 
   chooseMode(mode: DrillMode): void {
@@ -926,8 +1187,35 @@ export class MinerGame {
     return Math.min(0.3, Math.max(0, 0.1 * Math.floor(lossRatio / 0.25)));
   }
 
+  // v9：危险货物 —— 少数深渊矿物携带时会吸引风险（每堆 0..0.3）
+  private dangerForOre(id: OreId, quality: OreQuality): number {
+    const d: Record<OreId, number> = {
+      stone: 0, copper: 0, iron: 0, silver: 0, gold: 0,
+      diamond: quality === "legendary" ? 0.05 : quality === "fine" ? 0.03 : 0,
+      crystal: quality === "legendary" ? 0.14 : quality === "fine" ? 0.09 : 0.05,
+      unknown: quality === "legendary" ? 0.2 : quality === "fine" ? 0.14 : 0.08,
+    };
+    return d[id] ?? 0;
+  }
+
+  // v9：图鉴研究 —— 单矿物研究等级（0..10）
+  private researchLevel(key: string): number {
+    return Math.min(10, Math.max(0, this.save.codex?.research?.[key] ?? 0));
+  }
+
+  private totalResearchLevels(): number {
+    const r = this.save.codex?.research ?? {};
+    let sum = 0;
+    for (const v of Object.values(r)) sum += Math.min(10, Math.max(0, v));
+    return sum;
+  }
+
+  private researchValueMult(key: string): number {
+    return 1 + this.researchLevel(key) * 0.02; // v9：每级 +2% 对应矿石价值
+  }
+
   private oreUnitValue(id: OreId, quality: OreQuality): number {
-    return oreUnitValueBase(this.depth, id, quality) * (1 + this.valueBonus / 100);
+    return oreUnitValueBase(this.depth, id, quality) * (1 + this.valueBonus / 100) * this.researchValueMult(oreStackKey(id, quality));
   }
 
   private oreSlotName(id: OreId, quality: OreQuality): string {
@@ -993,6 +1281,7 @@ export class MinerGame {
         color: ORE_QUALITIES[quality].color,
         icon: ORE_QUALITIES[quality].icon,
         value: add * unit, unitValue: unit,
+        danger: this.dangerForOre(id, quality), // v9：危险货物（深渊矿物携带风险）
       });
       this.loadValue += add * unit;
       this.minedThisRun += add;
@@ -1026,6 +1315,7 @@ export class MinerGame {
         if (add > 0) {
           primary.count += add;
           primary.value = primary.count * primary.unitValue;
+          if (primary.id && primary.quality) primary.danger = this.dangerForOre(primary.id as OreId, primary.quality);
           s.count -= add;
           s.value = s.count * s.unitValue;
         }
@@ -1074,6 +1364,7 @@ export class MinerGame {
         icon: ORE_QUALITIES[a.quality].icon,
         value: Math.round(a.count * unit),
         unitValue: Math.round(unit),
+        danger: this.dangerForOre(a.id, a.quality), // v9：危险货物
       };
     });
   }
@@ -1085,6 +1376,7 @@ export class MinerGame {
       if (cur) {
         cur.count += s.count;
         cur.value += s.value;
+        cur.danger = Math.max(cur.danger ?? 0, s.danger ?? 0);
       } else {
         map.set(s.key, { ...s });
       }
@@ -1119,7 +1411,8 @@ export class MinerGame {
 
   private currentAccuracy(): number {
     const det = detectionStats(this.save.upgrades.detection);
-    return Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100 + this.accuracyBonusRun / 100);
+    // v9：图鉴研究 —— 总研究等级小幅提升探测精度（最高 +12%）
+    return Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100 + this.accuracyBonusRun / 100 + Math.min(0.12, this.totalResearchLevels() * 0.004));
   }
 
   private genLayer(depth: number, accuracy: number): Layer {
@@ -1669,6 +1962,9 @@ export class MinerGame {
     if (r >= 1) risk += 0.12;
     else if (r > 0.8) risk += 0.06;
     else if (r > 0.6) risk += 0.03;
+    // v9：危险货物 —— 携带深渊矿物吸引风险（封顶 +25%）
+    const bagDanger = this.bag.reduce((sum, sl) => sum + (sl.danger ?? 0), 0);
+    if (bagDanger > 0) risk += Math.min(0.25, bagDanger * 0.35);
     if (this.anomalyDouble) risk *= 1.2;
     // v7：富矿血脉 / 加固井壁 —— 全局风险削减生效
     risk *= Math.max(0.5, 1 - this.riskReduce);
@@ -1866,7 +2162,7 @@ export class MinerGame {
     };
     const snap = this.buildSnapshot();
     this.cb.onUi(snap);
-      this.cb.onRunEnd({ kind: "disaster", banked: saved, depth: depthAt, best: false, rating: null, bonus: 0, difficulty: this.difficulty, save: this.save });
+      this.cb.onRunEnd({ kind: "disaster", banked: saved, depth: depthAt, best: false, rating: null, bonus: 0, difficulty: this.difficulty, save: this.save, recovered: this.recoveredRun });
   }
 
   // 将当前背包中的矿石/消耗品写入仓库：矿石堆锁定开采当刻单价
@@ -1940,7 +2236,7 @@ export class MinerGame {
     };
     const snap = this.buildSnapshot();
     this.cb.onUi(snap);
-    this.cb.onRunEnd({ kind: "surfaced", banked, depth: depthAt, best: wasBest, rating: rating.grade, bonus: bonusCash, difficulty: this.difficulty, save: this.save });
+    this.cb.onRunEnd({ kind: "surfaced", banked, depth: depthAt, best: wasBest, rating: rating.grade, bonus: bonusCash, difficulty: this.difficulty, save: this.save, recovered: this.recoveredRun });
   }
 
   private maybeDropItem(): { name: string; icon: string } | null {
@@ -2027,12 +2323,37 @@ export class MinerGame {
       repairPct: 40,
       favor: this.save.favor,
       tasks,
+      orders: this.buildOrdersView(),
       pocket: Math.round(this.pocket),
       slots: this.slots,
       usedSlots: this.usedSlots(),
       bag: this.bag.map((s) => ({ ...s })),
       depth: this.depth,
     };
+  }
+
+  // v9：黑市订单 —— 每日 3 单，展示当前可交付订单（交付在仓库完成）
+  private buildOrdersView(): BlackMarketView["orders"] {
+    const today = dateKey();
+    const od = ensureDailyOrders(this.save.orders, today);
+    if (od !== this.save.orders) {
+      this.save.orders = od;
+      persistSave(this.save);
+    }
+    return od.active.map((id) => {
+      const def = ORDERS[id];
+      if (!def) return null;
+      return {
+        id,
+        name: def.name,
+        icon: def.icon,
+        desc: def.desc,
+        need: def.need,
+        rewardCash: def.reward.cash,
+        rewardFavor: def.reward.favor ?? 0,
+        done: od.done.includes(id),
+      };
+    }).filter((x): x is NonNullable<typeof x> => !!x);
   }
   // ---------------- 钻进结算 ----------------
 
@@ -3254,4 +3575,3 @@ function riskLabel(risk: number): string {
   if (risk < 0.42) return "高";
   return "极高";
 }
-

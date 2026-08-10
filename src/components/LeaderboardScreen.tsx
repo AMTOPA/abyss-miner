@@ -77,7 +77,7 @@ export default function LeaderboardScreen({ onClose }: Props) {
             </button>
           ))}
         </div>
-        <p className="modal-hint">{currentTab.hint}，登录后对应模式成绩自动上榜。</p>
+        <p className="modal-hint">{currentTab.hint}，登录后对应模式成绩自动上榜。娱乐榜：断局续玩/本地修改的成绩不参与排行，数值由服务器校验。</p>
 
         {error && (
           <div>
@@ -90,7 +90,12 @@ export default function LeaderboardScreen({ onClose }: Props) {
           </div>
         )}
         {!data && !error && <p className="modal-hint">加载中…</p>}
-        {data && <LeaderboardTable data={data} kind={kind} />}
+        {data && (
+          <>
+            <LeaderboardTable data={data} kind={kind} />
+            <LeaderboardCards data={data} kind={kind} />
+          </>
+        )}
 
         <div className="modal-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
@@ -155,5 +160,33 @@ function LeaderboardTableRow({ row, kind, isMe }: { row: LeaderboardRow; kind: S
       <td>{row.runs}</td>
       <td>{displayTime(row.last_run_at)}</td>
     </tr>
+  );
+}
+
+// v9：移动端卡片化排行榜（≤600px 显示，桌面隐藏）
+function LeaderboardCards({ data, kind }: { data: LeaderboardData; kind: ScoreKind }) {
+  return (
+    <div className="lb-card-list">
+      {data.list.length === 0 && <p className="lb-empty lb-card-empty">还没有人上榜，快去创造纪录吧！</p>}
+      {data.list.map((row) => (
+        <div key={row.username} className={`lb-card ${row.username === data.me?.username ? "lb-card-me" : ""}`}>
+          <span className={`lb-card-rank ${row.rank <= 3 ? `r${row.rank}` : ""}`}>
+            {row.rank <= 3 ? ["🥇", "🥈", "🥉"][row.rank - 1] : row.rank}
+          </span>
+          <span className="lb-card-main">
+            <span className="lb-card-name">
+              {row.username}
+              {row.username === data.me?.username && <span className="lb-tag">我</span>}
+            </span>
+            <span className="lb-card-meta">
+              <span className="gold">{displayBest(row.best, kind)}</span>
+              <span className="cyan">{row.best_depth}m</span>
+              <span>{row.runs} 局</span>
+            </span>
+          </span>
+          <span className="lb-card-time">{displayTime(row.last_run_at)}</span>
+        </div>
+      ))}
+    </div>
   );
 }

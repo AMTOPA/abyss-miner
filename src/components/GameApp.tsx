@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SaveData, loadSave, persistSave, replaceSave, getLocalSaveUpdatedAt, normalizeSave, MUTED_KEY } from "@/game/config";
-import { RunConfig, RunResult } from "@/game/types";
+import { RunConfig, RunResult, RunStateSnapshot } from "@/game/types";
 import { AudioEngine } from "@/game/audio";
 import LobbyScreen from "./LobbyScreen";
 import RunScreen from "./RunScreen";
@@ -12,6 +12,10 @@ import AuthModal from "./AuthModal";
 import { apiLogout, apiMe, apiSubmitScore, apiFetchSave, apiUploadSave, AuthUser } from "@/lib/api";
 
 type ScoreSubmit = { runId: string; value: number; depth: number; net: number; difficulty: "mild" | "normal" | "hardcore" };
+
+// v9：断局续玩 —— 局内快照存 sessionStorage（关闭标签页即失效，不残留）
+const RUN_SESSION_KEY = "abyss_miner_run_v9";
+type RunSession = { snap: RunStateSnapshot; runId: string; runCost: number };
 
 export default function GameApp() {
   const [save, setSave] = useState<SaveData>(() => loadSave());
@@ -30,8 +34,12 @@ export default function GameApp() {
   const [runId, setRunId] = useState<string>("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "done" | "needLogin" | "error">("idle");
   const [toast, setToast] = useState<string | null>(null);
+  const [resumeRun, setResumeRun] = useState<RunSession | null>(null);      // v9：可继续的远征
+  const [resumeSnapshot, setResumeSnapshot] = useState<RunStateSnapshot | null>(null); // v9：传给 RunScreen
 
   const audioRef = useRef<AudioEngine | null>(null);
+  const runIdRef = useRef("");
+  const runCostRef = useRef(0);
   if (!audioRef.current) audioRef.current = new AudioEngine();
 
   // 云存档同步：保存最新存档引用 + 上次已上传快照 + 并发锁
@@ -50,8 +58,22 @@ export default function GameApp() {
     setReady(true);
     try {
       setMuted(window.localStorage.getItem(MUTED_KEY) === "1");
+      // v9：恢复未完成的远征（仅稳定阶段、未结算的快照有效）
+      const raw = window.sessionStorage.getItem(RUN_SESSION_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as RunSession;
+        const s = parsed?.snap;
+        if (
+          s && s.version === 1 && s.config &&
+          s.phase !== "idle" && s.phase !== "gameover" && s.phase !== "surfaced" && !s.runEnded
+        ) {
+          setResumeRun({ snap: s, runId: parsed.runId || "", runCost: Number(parsed.runCost) || 0 });
+        } else {
+          window.sessionStorage.removeItem(RUN_SESSION_KEY);
+        }
+      }
     } catch {
-      /* ignore */
+      window.sessionStorage.removeItem(RUN_SESSION_KEY);
     }
   }, []);
 
@@ -134,22 +156,66 @@ export default function GameApp() {
     setRunStartDepth(depth);
     setRunConfig(config);
     setRunCost(cost);
+    runCostRef.current = cost;
     setSubmitState("idle");
     setPendingScore(null);
+    setResumeSnapshot(null);
+    setResumeRun(null);
     // 每局唯一 run ID：用于排行榜幂等提交（同一局不会重复上榜）
     const rid =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
         : "run_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
     setRunId(rid);
+    runIdRef.current = rid;
     setInRun(true);
     audioRef.current?.play("click");
+  }, []);
+
+  // v9：继续未完成的远征
+  const startResume = useCallback(() => {
+    if (!resumeRun) return;
+    const { snap, runId: rid, runCost: cost } = resumeRun;
+    setRunStartDepth(snap.depth);
+    setRunConfig(snap.config);
+    setRunCost(cost);
+    runCostRef.current = cost;
+    setRunId(rid);
+    runIdRef.current = rid;
+    setSave(snap.save);
+    setSubmitState("idle");
+    setPendingScore(null);
+    setResumeSnapshot(snap);
+    setInRun(true);
+    audioRef.current?.play("click");
+  }, [resumeRun]);
+
+  // v9：RunScreen 每到一个稳定阶段把完整引擎状态写回 sessionStorage
+  const handlePersistRunState = useCallback((snap: RunStateSnapshot) => {
+    try {
+      window.sessionStorage.setItem(RUN_SESSION_KEY, JSON.stringify({ snap, runId: runIdRef.current, runCost: runCostRef.current }));
+    } catch {
+      /* ignore quota errors */
+    }
+  }, []);
+
+  const clearResume = useCallback(() => {
+    try { window.sessionStorage.removeItem(RUN_SESSION_KEY); } catch { /* ignore */ }
+    setResumeRun(null);
   }, []);
 
   const handleRunEnd = useCallback(
     async (result: RunResult) => {
       setSave(result.save);
+      // v9：远征结束，清理续玩快照
+      clearResume();
       if (result.kind === "surfaced" && result.banked > 0) {
+        if (result.recovered) {
+          // v9：断局续玩恢复的远征不上榜（防止重复提交/本地回滚作弊）
+          setSubmitState("done");
+          showToast("断局续玩，本局成绩不上榜");
+          return;
+        }
         // v7：一次提交写入全部派生榜（价值/最深/净收益，硬核另写硬核榜）
         const net = result.banked - runCost;
         const difficulty = result.difficulty;
@@ -169,7 +235,7 @@ export default function GameApp() {
         }
       }
     },
-    [user, showToast, runId, runCost]
+    [user, showToast, runId, runCost, clearResume]
   );
 
   const handleLogin = useCallback(
@@ -244,8 +310,12 @@ export default function GameApp() {
           submitState={submitState}
           onToggleMute={() => setMuted((m) => !m)}
           onOpenAuth={openAuth}
+          resumeSnapshot={resumeSnapshot}
+          onPersistRunState={handlePersistRunState}
           onRunEnd={handleRunEnd}
           onExit={() => {
+            clearResume();
+            setResumeSnapshot(null);
             setInRun(false);
             setRunConfig(null);
             setSave(loadSave());
@@ -261,6 +331,9 @@ export default function GameApp() {
           onVolume={handleVolume}
           onToggleMute={() => setMuted((m) => !m)}
           onStart={startRun}
+          resumeRun={resumeRun ? { depth: resumeRun.snap.depth, pocket: resumeRun.snap.pocket } : null}
+          onResume={startResume}
+          onAbandonResume={clearResume}
           onUpgrades={() => {
             setShowUpgrades(true);
             audioRef.current?.play("click");

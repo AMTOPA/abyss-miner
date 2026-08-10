@@ -157,6 +157,36 @@ export default function BlackMarketPanel({ view, onSell, onBuy, onRefresh, onRep
           </div>
         </div>
 
+        {/* v9：本日订单（只读展示，交付在地面仓库完成） */}
+        <div className="bm-section">
+          <div className="bm-section-title">📋 本日订单</div>
+          {view.orders.length === 0 ? (
+            <p className="bm-empty">今天没有订单。</p>
+          ) : (
+            <div className="order-list bm-orders">
+              {view.orders.map((o) => (
+                <div key={o.id} className={`order-card ${o.done ? "order-done" : ""}`}>
+                  <span className="order-icon">{o.icon}</span>
+                  <span className="order-info">
+                    <span className="order-name">{o.name}{o.done ? <span className="order-done-tag">✅ 已交付</span> : null}</span>
+                    <span className="order-desc">{o.desc}</span>
+                    <span className="order-need">
+                      {o.need.map((need) => (
+                        <span key={need.ore + need.quality} className="order-need-item">
+                          "🪨" {need.count} {ORES[need.ore as keyof typeof ORES]?.name ?? need.ore}·{ORE_QUALITIES[need.quality as keyof typeof ORE_QUALITIES]?.name ?? need.quality}
+                        </span>
+                      ))}
+                    </span>
+                  </span>
+                  <span className="order-reward">💰 {fmt(o.rewardCash)}{o.rewardFavor ? ` + ❤️${o.rewardFavor}` : ""}</span>
+                  <span className="order-bm-hint">{o.done ? "已交付" : "回地面仓库交付"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="bm-empty">订单交付在地面仓库完成（消耗仓库矿石，领取现金与好感）。</p>
+        </div>
+
         <div className="modal-actions">
           <button className="btn btn-primary btn-big" onClick={onLeave}>
             离开黑市

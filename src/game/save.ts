@@ -61,6 +61,14 @@ function normalizeEquipment(e: unknown): EquipmentInstance {
   return { uid, id, slot, tier, stats };
 }
 
+// v9：黑市订单结构归一化（每日 3 单；active/done 只保留合法订单 ID）
+function normalizeOrders(v: unknown): SaveData["orders"] {
+  const raw = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  const asList = (x: unknown): string[] =>
+    Array.isArray(x) ? (x as unknown[]).filter((s) => typeof s === "string") as string[] : [];
+  return { date: typeof raw.date === "string" ? raw.date : "", active: asList(raw.active), done: asList(raw.done) };
+}
+
 // 把任意输入归一化为合法 SaveData：未知字段合并默认值、数值钳制、异常时返回可恢复存档
 export function normalizeSave(raw: unknown): SaveData {
   const base = defaultSave();
@@ -141,6 +149,7 @@ export function normalizeSave(raw: unknown): SaveData {
       research: sanitizeRecord(codexRaw.research),
     },
     daily: (r.daily && typeof r.daily === "object" ? r.daily : { date: "", tasks: {}, claimed: {} }) as SaveData["daily"],
+    orders: normalizeOrders(r.orders),
     stats,
     settings: { muted: !!((r.settings ?? {}) as Record<string, unknown>).muted, reduceMotion: !!((r.settings ?? {}) as Record<string, unknown>).reduceMotion },
   };

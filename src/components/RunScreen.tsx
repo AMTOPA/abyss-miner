@@ -7,7 +7,7 @@ import { MinerGame } from "@/game/engine";
 import { AudioEngine } from "@/game/audio";
 import type { AuthUser } from "@/lib/api";
 import { CONSUMABLES, DIFFICULTY_DEFS, ORE_QUALITIES, RATING_INFO } from "@/game/items";
-import type { BagSlot, ChallengeId, ModuleId, RevealLevel, RouteId, RunConfig, RunResult, UiSnapshot } from "@/game/types";
+import type { BagSlot, ChallengeId, ModuleId, RevealLevel, RouteId, RunConfig, RunResult, RunStateSnapshot, UiSnapshot } from "@/game/types";
 import BanditPanel from "./BanditPanel";
 import BasePanel from "./BasePanel";
 import BlackMarketPanel from "./BlackMarketPanel";
@@ -25,6 +25,8 @@ type Props = {
   user: AuthUser | null;
   muted: boolean;
   submitState: "idle" | "submitting" | "done" | "needLogin" | "error";
+  resumeSnapshot: RunStateSnapshot | null;   // v9：断局续玩
+  onPersistRunState: (snap: RunStateSnapshot) => void; // v9：写入 sessionStorage
   onToggleMute: () => void;
   onOpenAuth: (mode: "login" | "register") => void;
   onRunEnd: (result: RunResult) => void;
@@ -33,7 +35,8 @@ type Props = {
 
 type DrillMode = "cautious" | "standard" | "overload";
 type EngineHandle = {
-  startRun(startDepth: number, save: SaveData, config: RunConfig): void;
+  startRun(startDepth: number, save: SaveData, config: RunConfig, resumeSnap?: RunStateSnapshot | null): void;
+  captureRunState(): RunStateSnapshot | null;
   chooseMode(mode: DrillMode): void;
   drillStop(): void;
   drillRelease(): void;
@@ -138,7 +141,10 @@ export default function RunScreen(props: Props) {
     const Ctor = MinerGame as unknown as EngineCtor;
     const engine = new Ctor(canvas, current.save, current.audio, { onUi: setSnap, onRunEnd: (result) => propsRef.current.onRunEnd(result) });
     engineRef.current = engine;
-    engine.startRun(current.startDepth, current.save, current.runConfig);
+    engine.startRun(current.startDepth, current.save, current.runConfig, current.resumeSnapshot ?? null);
+    if (current.resumeSnapshot) {
+      propsRef.current.onPersistRunState(current.resumeSnapshot);
+    }
     return () => { engine.destroy(); engineRef.current = null; propsRef.current.audio.stopAmbient(); };
   }, []);
 
@@ -152,6 +158,16 @@ export default function RunScreen(props: Props) {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
+
+  // v9：断局续玩 —— 稳定阶段把完整引擎状态写入 sessionStorage（下潜/钻进动画中不写）
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !snap) return;
+    if (snap.phase === "drilling" || snap.phase === "descending") return;
+    if (snap.phase === "idle" || snap.phase === "gameover" || snap.phase === "surfaced") return;
+    const s = engine.captureRunState();
+    if (s) propsRef.current.onPersistRunState(s);
+  }, [snap]);
 
   const act = (fn: (engine: EngineHandle) => void) => {
     const engine = engineRef.current;

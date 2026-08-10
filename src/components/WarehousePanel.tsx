@@ -2,7 +2,9 @@
 
 import { useMemo } from "react";
 import { OreStack, SaveData, ORES, fmt, persistSave } from "@/game/config";
+import { ORDERS } from "@/game/content";
 import { CONSUMABLES, ORE_QUALITIES, OreQuality, parseOreKey } from "@/game/items";
+import { canDeliverOrder, deliverOrder, ordersNeedingKey, todayOrders } from "@/game/orders";
 
 type Props = {
   save: SaveData;
@@ -79,6 +81,11 @@ export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
                     锁定单价 {fmt(row.unitValue)} · 合计 <span className="gold">{fmt(row.total)}</span>
                   </div>
                   <div className="wh-sell">
+                    {ordersNeedingKey(save, row.key).length > 0 && (
+                      <span className="order-warn" title={`「${ordersNeedingKey(save, row.key).map((o) => o.name).join("、")}」需要这种矿石，交付后更赚`}>
+                        📋 订单需要
+                      </span>
+                    )}
                     <button className="btn btn-secondary btn-sm" onClick={() => sell(row, 1)}>卖 1</button>
                     <button className="btn btn-danger btn-sm" onClick={() => sell(row, row.count)}>全卖</button>
                   </div>
@@ -91,6 +98,8 @@ export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
           仓库矿石总价值：<span className="gold">{fmt(totalValue)}</span> 💰
         </div>
       </section>
+
+      <OrderSection save={save} onSave={onSave} />
 
       <section className="deploy-section">
         <h3 className="deploy-section-title">消耗品</h3>
@@ -125,5 +134,71 @@ export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
         )}
       </section>
     </div>
+  );
+}
+
+// v9：本日订单 —— 消耗仓库矿石交付，结算现金与好感度（每日 3 单，仓库交付）
+function OrderSection({ save, onSave }: { save: SaveData; onSave: (next: SaveData) => void }) {
+  const od = todayOrders(save);
+  const active = od.active.filter((id) => !!ORDERS[id]);
+  const haveOre = (key: string): number => save.warehouseStacks.filter((s) => s.key === key).reduce((sum, s) => sum + s.count, 0);
+
+  return (
+    <section className="deploy-section">
+      <h3 className="deploy-section-title">📋 本日订单（每日刷新，交付消耗仓库矿石）</h3>
+      {active.length === 0 ? (
+        <p className="modal-hint">今天没有订单，明天再来看看吧。</p>
+      ) : (
+        <div className="order-list">
+          {active.map((id) => {
+            const def = ORDERS[id];
+            const done = od.done.includes(id);
+            const deliverable = canDeliverOrder(save, id);
+            const missing: string[] = [];
+            for (const need of def.need) {
+              const key = need.ore + ":" + need.quality;
+              const held = haveOre(key);
+              if (held < need.count) missing.push(`${ORES[need.ore as keyof typeof ORES]?.name ?? need.ore}·${ORE_QUALITIES[need.quality as OreQuality]?.name ?? need.quality}（差 ${need.count - held}）`);
+            }
+            return (
+              <div key={id} className={`order-card ${done ? "order-done" : ""}`}>
+                <span className="order-icon">{def.icon}</span>
+                <span className="order-info">
+                  <span className="order-name">{def.name}{done ? <span className="order-done-tag">✅ 已交付</span> : null}</span>
+                  <span className="order-desc">{def.desc}</span>
+                  <span className="order-need">
+                    {def.need.map((need) => {
+                      const key = need.ore + ":" + need.quality;
+                      const held = haveOre(key);
+                      const ok = held >= need.count;
+                      return (
+                        <span key={key} className={ok ? "order-need-item order-ok" : "order-need-item order-bad"}>
+                          "🪨" {need.count} {ORES[need.ore as keyof typeof ORES]?.name ?? need.ore}·{ORE_QUALITIES[need.quality as OreQuality]?.name ?? need.quality}（持有 {held}）
+                        </span>
+                      );
+                    })}
+                  </span>
+                </span>
+                <span className="order-reward">💰 {fmt(def.reward.cash)}{def.reward.favor ? ` + ❤️${def.reward.favor}` : ""}</span>
+                {done ? (
+                  <span className="order-done-btn">已交付</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary order-btn"
+                    disabled={!deliverable}
+                    title={missing.length ? "缺少：" + missing.join("、") : "消耗仓库矿石，领取现金与好感度"}
+                    onClick={() => onSave(deliverOrder(save, id))}
+                  >
+                    交付
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="modal-hint">订单材料被订单锁定：仓库售出时会有提醒，避免误卖。</p>
+    </section>
   );
 }

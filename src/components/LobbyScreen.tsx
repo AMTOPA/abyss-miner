@@ -28,6 +28,10 @@ export type LobbyProps = {
   onVolume: (v: number) => void;
   onToggleMute: () => void;
   onStart: (startDepth: number, config: RunConfig, cost: number) => void;
+  // v9：断局续玩
+  resumeRun: { depth: number; pocket: number } | null;
+  onResume: () => void;
+  onAbandonResume: () => void;
   onUpgrades: () => void;
   onLeaderboard: () => void;
   onLogin: () => void;
@@ -360,6 +364,16 @@ const renderSettings = () => (
     <div className="lobby-screen">
       <div className="lobby-bg" />
       <header className="lobby-header"><div className="lobby-brand"><span className="brand-ore">💎</span><span>深渊矿工</span></div><div className="lobby-top-right"><div className="lobby-cash">💰 {fmt(save.cash)}</div>{user ? <div className="user-chip"><span className="user-name">{user.username}</span><button type="button" className="btn btn-ghost btn-sm" onClick={props.onLogout}>退出</button></div> : <div className="user-chip"><button type="button" className="btn btn-ghost btn-sm" onClick={props.onLogin}>登录</button><button type="button" className="btn btn-primary btn-sm" onClick={props.onRegister}>注册</button></div>}<button type="button" className="btn btn-ghost btn-sm" onClick={props.onToggleMute} title={muted ? "开启音效" : "静音"}>{muted ? "🔇" : "🔊"}</button></div></header>
+      {props.resumeRun && (
+        <div className="resume-banner">
+          <span className="resume-banner-icon">🔄</span>
+          <span className="resume-banner-text">检测到未完成的远征（深度 <strong>{props.resumeRun.depth}m</strong> · 随身现金 {fmt(props.resumeRun.pocket)}）。断局续玩可保留当前进度，但该局成绩不上排行榜。</span>
+          <span className="resume-banner-actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={props.onResume}>继续远征</button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={props.onAbandonResume}>放弃</button>
+          </span>
+        </div>
+      )}
       <nav className="lobby-tabs">{TABS.map((item) => <button key={item.id} type="button" className={`lobby-tab ${tab === item.id ? "on" : ""}`} onClick={() => setTab(item.id)}>{item.icon} {item.name}</button>)}</nav>
       <div className="lobby-panel">
         {tab === "deploy" && renderDeploy()}
@@ -367,7 +381,7 @@ const renderSettings = () => (
         {tab === "shop" && <ShopPanel save={save} onSave={onSave} />}
         {tab === "loadout" && <LoadoutPanel save={save} onSave={onSave} />}
         {tab === "forge" && <ForgePanel save={save} onSave={onSave} />}
-        {tab === "codex" && <CodexPanel save={save} />}
+        {tab === "codex" && <CodexPanel save={save} onSave={onSave} />}
         {tab === "leaderboard" && renderLeaderboard()}
         {tab === "settings" && renderSettings()}
       </div>
