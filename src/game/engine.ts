@@ -178,6 +178,7 @@ export class MinerGame {
   private previewLayer: Layer | null = null; // v7：已预生成的下一层（预览与实际消费同一对象，保证种子复现）
   private nextSlotId = 1;                    // v7：背包格子唯一 ID 生成器
   private drillUiAccum = 0;                  // v7：钻进中节流推送 HUD 快照
+  private pageHidden = false;                 // v10: page hidden -> auto pause
   // v4 事件视图（route/room/module/base 阶段由 buildSnapshot 读取）
   private roomView: RoomView | null = null;
   private routeOptions: RouteChoice[] | null = null;
@@ -204,7 +205,8 @@ export class MinerGame {
   private floatTexts: FloatText[] = [];
   private shake = 0;
   private flash = 0;
-  private reduceMotion = false; // v8：设置-减少动态（减弱震屏/闪光/粒子）
+  private reduceMotion = false;   // v10: settings shake toggle
+  private shakeEnabled = true; // v8：设置-减少动态（减弱震屏/闪光/粒子）
   private flashColor = "#ffffff";
   private time = 0;
   private phaseTimer = 0;
@@ -229,6 +231,7 @@ export class MinerGame {
     this.save = save;
     this.resize();
     window.addEventListener("resize", this.resize);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVis);
     this.lastTime = performance.now();
     this.raf = requestAnimationFrame(this.loop);
   }
@@ -236,8 +239,13 @@ export class MinerGame {
   destroy(): void {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVis);
     this.audio.stopDrill();
   }
+
+  private onVis = (): void => {
+    this.pageHidden = typeof document !== "undefined" && document.hidden;
+  };
 
   private resize = (): void => {
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -282,6 +290,7 @@ export class MinerGame {
     this.runEnded = false;
     this.recoveredRun = false;
     this.reduceMotion = !!save.settings?.reduceMotion;
+    this.shakeEnabled = save.settings?.shakeEnabled !== false;
     this.minedThisRun = 0;
     this.scaredThisRun = 0;
     this.canBlackMarket = false;
@@ -2604,6 +2613,12 @@ export class MinerGame {
   // ---------------- 更新循环 ----------------
 
   private loop = (t: number): void => {
+    // v10: page hidden -> auto pause (background rAF ~1Hz would otherwise become 20x slow motion)
+    if (this.pageHidden) {
+      this.lastTime = t;
+      this.raf = requestAnimationFrame(this.loop);
+      return;
+    }
     const dt = Math.min(0.05, (t - this.lastTime) / 1000);
     this.lastTime = t;
     this.time += dt;
@@ -2912,8 +2927,9 @@ export class MinerGame {
     const ctx = this.ctx;
     const w = this.w, h = this.h;
     ctx.save();
-    if (this.shake > 0) {
-      ctx.translate((Math.random() - 0.5) * this.shake * (this.reduceMotion ? 0.2 : 1), (Math.random() - 0.5) * this.shake * (this.reduceMotion ? 0.2 : 1));
+    if (this.shake > 0 && this.shakeEnabled) {
+      const shakeAmp = this.shake * (this.reduceMotion ? 0.2 : 1);
+      ctx.translate((Math.random() - 0.5) * shakeAmp, (Math.random() - 0.5) * shakeAmp);
     }
     this.drawBackground(ctx, w, h);
     this.drawCaveSides(ctx, w, h);

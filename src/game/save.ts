@@ -131,6 +131,7 @@ export function normalizeSave(raw: unknown): SaveData {
       ? [...new Set((r.unlockedCheckpoints as unknown[]).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n >= 0))].sort((a, b) => a - b)
       : [0],
     warehouseStacks: stacks,
+    warehouseLocked: Array.isArray(r.warehouseLocked) ? (r.warehouseLocked as unknown[]).filter((x) => typeof x === "string") as string[] : [],
     warehouseItems: sanitizeRecord(r.warehouseItems),
     warehouseEquipment: equipment,
     equipped,
@@ -150,8 +151,23 @@ export function normalizeSave(raw: unknown): SaveData {
     },
     daily: (r.daily && typeof r.daily === "object" ? r.daily : { date: "", tasks: {}, claimed: {} }) as SaveData["daily"],
     orders: normalizeOrders(r.orders),
+    checkin: (() => {
+      const ch = ((r.checkin ?? {}) as Record<string, unknown>);
+      return {
+        date: typeof ch.date === "string" ? ch.date : "",
+        streak: clampNum(ch.streak, 0, 365, 0),
+        total: clampNum(ch.total, 0, 1e6, 0),
+      };
+    })(),
     stats,
-    settings: { muted: !!((r.settings ?? {}) as Record<string, unknown>).muted, reduceMotion: !!((r.settings ?? {}) as Record<string, unknown>).reduceMotion },
+    settings: {
+      muted: !!((r.settings ?? {}) as Record<string, unknown>).muted,
+      reduceMotion: !!((r.settings ?? {}) as Record<string, unknown>).reduceMotion,
+      shakeEnabled: ((r.settings ?? {}) as Record<string, unknown>).shakeEnabled !== false,
+      textScale: [1, 1.1, 1.25].includes(Number(((r.settings ?? {}) as Record<string, unknown>).textScale))
+        ? Number(((r.settings ?? {}) as Record<string, unknown>).textScale)
+        : 1,
+    },
   };
 }
 

@@ -158,6 +158,7 @@ export type SaveData = {
   unlockedCheckpoints: number[];
   // v3：矿石堆列表（每个堆锁定 unitValue）
   warehouseStacks: OreStack[];
+  warehouseLocked: string[];             // v10: locked ore keys excluded from bulk sell
   warehouseItems: Record<string, number>;      // 消耗品 itemId -> 数量
   warehouseEquipment: EquipmentInstance[];     // 拥有的装备（实例自带 tier 缩放后的属性）
   equipped: Partial<Record<"drill" | "pack" | "armor" | "detector" | "charm", string>>; // uid -> 已装备
@@ -175,7 +176,8 @@ export type SaveData = {
     research: Record<string, number>;   // 图鉴研究等级：key -> level
   };
   daily: DailyProgress;                        // 每日任务进度（好感度来源）
-  orders: { date: string; active: string[]; done: string[] }; // v9：黑市订单（每日 3 单，仓库交付）
+  orders: { date: string; active: string[]; done: string[] };
+  checkin: { date: string; streak: number; total: number }; // v9：黑市订单（每日 3 单，仓库交付）
   stats: {
     runs: number;
     totalBanked: number;
@@ -189,7 +191,7 @@ export type SaveData = {
     anomaliesSeen: number;   // 深渊异常遭遇次数（深渊生存者解锁）
     overloadDrills: number;  // 超载钻进累计次数（超载钻工解锁）
   };
-  settings: { muted: boolean; reduceMotion: boolean };
+  settings: { muted: boolean; reduceMotion: boolean; shakeEnabled: boolean; textScale: number };
 };
 
 export const SAVE_KEY = "abyss_miner_save_v4";
@@ -202,6 +204,7 @@ export function defaultSave(): SaveData {
     upgrades: { drill: 0, safety: 0, backpack: 0, detection: 0, support: 0 },
     unlockedCheckpoints: [0],
     warehouseStacks: [],
+    warehouseLocked: [],
     warehouseItems: {},
     warehouseEquipment: [],
     equipped: {},
@@ -212,8 +215,9 @@ export function defaultSave(): SaveData {
     codex: { minerals: {}, rooms: [], creatures: 0, anomalies: [], modules: [], research: {} },
     daily: { date: "", tasks: {}, claimed: {} },
     orders: { date: "", active: [], done: [] },
+    checkin: { date: "", streak: 0, total: 0 },
     stats: { runs: 0, totalBanked: 0, bestRunValue: 0, bestDepth: 0, disasters: 0, totalMined: 0, totalSells: 0, creaturesScared: 0, bmTrades: 0, anomaliesSeen: 0, overloadDrills: 0 },
-    settings: { muted: false, reduceMotion: false },
+    settings: { muted: false, reduceMotion: false, shakeEnabled: true, textScale: 1 },
   };
 }
 

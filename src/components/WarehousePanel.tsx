@@ -39,7 +39,21 @@ export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
   const itemRows = Object.entries(save.warehouseItems).filter(([, c]) => c > 0);
 
   // 卖出矿石：按该堆锁定的单价变现，不影响其他堆
+  const lockedSet = new Set(save.warehouseLocked);
+  const toggleLock = (key: string) => {
+    const next = lockedSet.has(key)
+      ? save.warehouseLocked.filter((k) => k !== key)
+      : [...save.warehouseLocked, key];
+    const s: SaveData = { ...save, warehouseLocked: next };
+    persistSave(s);
+    onSave(s);
+  };
+  // ??????????????????????
   const sell = (row: OreRow, n: number) => {
+    if (lockedSet.has(row.key)) return;
+    const sellingAll = n >= row.count;
+    const highValue = row.total >= 3000 || row.quality === "legendary";
+    if (sellingAll && highValue && typeof window !== "undefined" && !window.confirm(`确认卖出全部 ${row.count} 个（价值 ${fmt(row.total)}）？`)) return;
     const stack = save.warehouseStacks.find((s) => s.key === row.key && s.unitValue === row.unitValue);
     const cur = stack ? stack.count : 0;
     if (cur <= 0) return;
@@ -70,7 +84,7 @@ export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
               const ore = ORES[row.id as keyof typeof ORES];
               const q = ORE_QUALITIES[row.quality];
               return (
-                <div key={row.key + "@" + row.unitValue + "-" + row.count} className="wh-row">
+                <div key={row.key + "@" + row.unitValue + "-" + row.count} className={`wh-row${lockedSet.has(row.key) ? " wh-row-locked" : ""}`}>
                   <div className="wh-ore">
                     <span style={{ color: q.color }}>
                       {q.icon} {ore ? ore.name : row.id}·{q.name}
@@ -86,8 +100,9 @@ export default function WarehousePanel({ save, onSave, onGoLoadout }: Props) {
                         📋 订单需要
                       </span>
                     )}
-                    <button className="btn btn-secondary btn-sm" onClick={() => sell(row, 1)}>卖 1</button>
-                    <button className="btn btn-danger btn-sm" onClick={() => sell(row, row.count)}>全卖</button>
+                    <button type="button" className={`btn btn-sm ${lockedSet.has(row.key) ? "btn-gold" : "btn-ghost"}`} onClick={() => toggleLock(row.key)} title={lockedSet.has(row.key) ? "已锁定：不会被卖出，点击解锁" : "锁定：防止误卖"}>{lockedSet.has(row.key) ? "🔒 已锁定" : "🔓 锁定"}</button>
+                    <button className="btn btn-secondary btn-sm" disabled={lockedSet.has(row.key)} onClick={() => sell(row, 1)}>卖 1</button>
+                    <button className="btn btn-danger btn-sm" disabled={lockedSet.has(row.key)} onClick={() => sell(row, row.count)}>全卖</button>
                   </div>
                 </div>
               );

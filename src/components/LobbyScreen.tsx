@@ -120,6 +120,27 @@ function makeSeed(mode: SeedMode): string {
 export default function LobbyScreen(props: LobbyProps) {
   const { save, user, muted, onSave } = props;
   const [tab, setTab] = useState<LobbyTab>("deploy");
+  // v10??????????????????????
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const yestStr = (() => {
+    const d = new Date(Date.now() - 86400000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const claimedToday = save.checkin.date === todayStr;
+  const nextStreak = save.checkin.date === yestStr ? save.checkin.streak + 1 : 1;
+  const checkinReward = Math.min(500, 50 + (nextStreak - 1) * 25);
+  const doCheckin = () => {
+    const next: SaveData = {
+      ...save,
+      cash: save.cash + checkinReward,
+      checkin: { date: todayStr, streak: nextStreak, total: save.checkin.total + 1 },
+    };
+    persistSave(next);
+    onSave(next);
+  };
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [depth, setDepth] = useState(0);
   const [difficulty, setDifficulty] = useState<Difficulty>("normal");
@@ -347,6 +368,18 @@ const renderSettings = () => (
           <span className="settings-label">减少动态</span>
           <button type="button" className={save.settings.reduceMotion ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm"} onClick={() => props.onSave({ ...save, settings: { ...save.settings, reduceMotion: !save.settings.reduceMotion } })}>{save.settings.reduceMotion ? "已开启" : "已关闭"}</button>
           <span className="settings-hint">降低震屏、闪光与粒子密度</span>
+        <div className="settings-row">
+          <span className="settings-label">震屏</span>
+          <button type="button" className={save.settings.shakeEnabled ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm"} onClick={() => props.onSave({ ...save, settings: { ...save.settings, shakeEnabled: !save.settings.shakeEnabled } })}>{save.settings.shakeEnabled ? "已开启" : "已关闭"}</button>
+          <span className="settings-hint">钻机震动与爆炸震屏</span>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">文本大小</span>
+          {[1, 1.1, 1.25].map((s) => (
+            <button key={s} type="button" className={save.settings.textScale === s ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm"} onClick={() => props.onSave({ ...save, settings: { ...save.settings, textScale: s } })}>{s === 1 ? "标准" : s === 1.1 ? "大" : "特大"}</button>
+          ))}
+          <span className="settings-hint">缩放大厅界面文字与卡片</span>
+        </div>
         </div>
       </section>
       <section className="deploy-section">
@@ -361,7 +394,7 @@ const renderSettings = () => (
   );
 
   return (
-    <div className="lobby-screen">
+    <div className="lobby-screen" style={{ zoom: save.settings.textScale }}>
       <div className="lobby-bg" />
       <header className="lobby-header"><div className="lobby-brand"><span className="brand-ore">💎</span><span>深渊矿工</span></div><div className="lobby-top-right"><div className="lobby-cash">💰 {fmt(save.cash)}</div>{user ? <div className="user-chip"><span className="user-name">{user.username}</span><button type="button" className="btn btn-ghost btn-sm" onClick={props.onLogout}>退出</button></div> : <div className="user-chip"><button type="button" className="btn btn-ghost btn-sm" onClick={props.onLogin}>登录</button><button type="button" className="btn btn-primary btn-sm" onClick={props.onRegister}>注册</button></div>}<button type="button" className="btn btn-ghost btn-sm" onClick={props.onToggleMute} title={muted ? "开启音效" : "静音"}>{muted ? "🔇" : "🔊"}</button></div></header>
       {props.resumeRun && (
@@ -374,6 +407,14 @@ const renderSettings = () => (
           </span>
         </div>
       )}
+      <div className="checkin-strip">
+        <span className="checkin-info">?? 连续签到 <strong>{save.checkin.streak}</strong> 天 · 累计 {save.checkin.total} 天</span>
+        {claimedToday ? (
+          <span className="checkin-done">? 今日已签到</span>
+        ) : (
+          <button type="button" className="btn btn-primary btn-sm" onClick={doCheckin}>签到领 {fmt(checkinReward)} ??</button>
+        )}
+      </div>
       <nav className="lobby-tabs">{TABS.map((item) => <button key={item.id} type="button" className={`lobby-tab ${tab === item.id ? "on" : ""}`} onClick={() => setTab(item.id)}>{item.icon} {item.name}</button>)}</nav>
       <div className="lobby-panel">
         {tab === "deploy" && renderDeploy()}

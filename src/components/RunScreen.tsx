@@ -129,6 +129,7 @@ export default function RunScreen(props: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<EngineHandle | null>(null);
   const [snap, setSnap] = useState<UiSnapshot | null>(null);
+  const [hidden, setHidden] = useState(false); // v10: page hidden -> pause overlay
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -149,6 +150,16 @@ export default function RunScreen(props: Props) {
   }, []);
 
   // v7：远征进行中拦截误刷新/关闭，避免无提示丢失本局（已扣除的出发资源不会返还）
+  // v10: page hidden -> pause overlay (engine auto-pauses in background)
+  useEffect(() => {
+    const handler = () => setHidden(typeof document !== "undefined" && document.hidden);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handler);
+      handler();
+    }
+    return () => { if (typeof document !== "undefined") document.removeEventListener("visibilitychange", handler); };
+  }, []);
+
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (!engineRef.current) return;
@@ -192,6 +203,7 @@ export default function RunScreen(props: Props) {
   return (
     <div className="run-screen">
       <canvas ref={canvasRef} className="run-canvas" />
+      {hidden && <div className="run-pause-overlay"><div className="run-pause-box"><span className="run-pause-icon">?</span><strong>???</strong><p>????????????</p></div></div>}
       <header className="run-topbar">
         <div className="topbar-controls"><button type="button" className="btn btn-ghost btn-sm" onClick={exit}>✕ 返回</button><button type="button" className="btn btn-ghost btn-sm" onClick={props.onToggleMute}>{props.muted ? "🔇" : "🔊"}</button></div>
         {snap && <div className="topbar-status">

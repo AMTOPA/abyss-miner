@@ -10,6 +10,28 @@ import {
 
 type Props = { save: SaveData; onSave: (next: SaveData) => void };
 
+const ORE_SILHOUETTE: Record<string, string> = {
+  stone: "▣",
+  copper: "●",
+  iron: "⬟",
+  silver: "◇",
+  gold: "⬢",
+  diamond: "◆",
+  crystal: "⬡",
+  unknown: "✦",
+};
+
+const ORE_CLUE: Record<string, string> = {
+  stone: "浅层随手可得",
+  copper: "浅层矿脉常见",
+  iron: "约 20m 以下旧矿井",
+  silver: "约 80m 以下旧矿井",
+  gold: "约 160m 以下岩浆带",
+  diamond: "约 300m 以下岩浆带",
+  crystal: "约 600m 以下生物区",
+  unknown: "约 1000m 以下深渊",
+};
+
 // 图鉴页同时展示收集进度与尚未发现的条目，便于玩家明确长期目标。
 export default function CodexPanel({ save, onSave }: Props) {
   const codex = save.codex ?? {
@@ -44,10 +66,11 @@ export default function CodexPanel({ save, onSave }: Props) {
             return (
               <div key={key} className={`codex-mineral-card codex-mineral ${count > 0 ? "discovered" : "locked"}`}>
                 {count > 0 && level > 0 && <span className="codex-level-badge">Lv.{level}</span>}
-                <span className="codex-mineral-icon mineral-icon" style={{ color: ore.color }}>{quality.icon}</span>
-                <span className="codex-mineral-name mineral-name">{count > 0 ? ore.name : "未知矿物"}</span>
+                                <span className="codex-mineral-icon mineral-icon" style={{ color: ore.color }}>{count > 0 ? quality.icon : (ORE_SILHOUETTE[oreId] ?? "?")}</span>
+                <span className={`codex-mineral-name mineral-name${count > 0 ? "" : " codex-mineral-name-locked"}`}>{count > 0 ? ore.name : "未知矿物"}</span>
                 <span className="codex-mineral-quality" style={{ color: quality.color }}>{quality.name}</span>
-                <span className="codex-mineral-count mineral-meta">已收集 ×{count}</span>
+                <span className="codex-mineral-meta mineral-meta">{count > 0 ? `已收集 ×${count}` : `线索：${ORE_CLUE[oreId] ?? "继续深入寻找"}`}</span>
+
               </div>
             );
           }))}
