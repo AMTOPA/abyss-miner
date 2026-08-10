@@ -70,8 +70,10 @@ export function getDb(): DatabaseSync {
 
   // 索引必须在列迁移后创建；新建数据库也需要 run_id 唯一索引。
   db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_scores_run
-      ON scores(user_id, run_id) WHERE run_id IS NOT NULL;
+    DROP INDEX IF EXISTS idx_scores_run;
+    -- v7：同一局（run_id）可写入多个派生榜（value/depth/net/hardcore），按 kind 幂等
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scores_run_kind
+      ON scores(user_id, run_id, kind) WHERE run_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_scores_kind_value ON scores(kind, run_value DESC);
     CREATE INDEX IF NOT EXISTS idx_scores_kind_depth ON scores(kind, depth DESC);
     CREATE INDEX IF NOT EXISTS idx_scores_kind_net ON scores(kind, net DESC);

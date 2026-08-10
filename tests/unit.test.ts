@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { defaultSave } from "../src/game/config";
+import { defaultSave, isEvacDepth, isSpecialEvacDepth } from "../src/game/config";
 import { normalizeSave } from "../src/game/save";
 import { CONSUMABLES, makeEquipmentInstance, oreUnitValue, scaleStats } from "../src/game/items";
 import { overloadOrePool } from "../src/game/world";
@@ -84,6 +84,39 @@ describe("矿石估价口径", () => {
     const fine = oreUnitValue(100, "copper", "fine");
     const legend = oreUnitValue(100, "copper", "legendary");
     expect(poor < normal && normal < fine && fine < legend).toBe(true);
+  });
+});
+
+describe("v7 撤离点公式生成（1000m 后仍可撤离）", () => {
+  it("撤离点为 depth % 100 === 50（含 1000m 之后）", () => {
+    expect(isEvacDepth(50)).toBe(true);
+    expect(isEvacDepth(950)).toBe(true);
+    expect(isEvacDepth(1050)).toBe(true);
+    expect(isEvacDepth(1150)).toBe(true);
+    expect(isEvacDepth(1000)).toBe(false);
+    expect(isEvacDepth(0)).toBe(false);
+  });
+
+  it("特殊撤离点每 300m 一个（250/550/850/1150…）", () => {
+    expect(isSpecialEvacDepth(250)).toBe(true);
+    expect(isSpecialEvacDepth(850)).toBe(true);
+    expect(isSpecialEvacDepth(1150)).toBe(true);
+    expect(isSpecialEvacDepth(1050)).toBe(false);
+  });
+});
+
+describe("v7 极品装备减免属性钳制（≤90%，防止公式反向）", () => {
+  it("wearReduce / banditReduce / anomalyResist 最高 90%", () => {
+    const scaled = scaleStats({ wearReduce: 50, banditReduce: 50, anomalyResist: 50, qualityBonus: 5 }, 3);
+    expect(scaled.wearReduce).toBe(90);   // 50×3.2=160 -> 90
+    expect(scaled.banditReduce).toBe(90);
+    expect(scaled.anomalyResist).toBe(90);
+    expect(scaled.qualityBonus).toBe(16); // 非减免属性不钳制
+  });
+
+  it("深渊战甲实例的 wearReduce 被钳制到 90%", () => {
+    const inst = makeEquipmentInstance("armor_3", 3);
+    expect(inst.stats.wearReduce).toBe(90);
   });
 });
 

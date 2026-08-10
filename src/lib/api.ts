@@ -71,12 +71,12 @@ export async function apiUploadSave(save: unknown, clientUpdatedAt: number): Pro
   return readJson(res);
 }
 
+// v7：一次提交写入全部派生榜（价值/最深/净收益，硬核模式另写硬核榜）
 export async function apiSubmitScore(
   runId: string,
   runValue: number,
   depth: number,
-  kind: ScoreKind = "value",
-  net?: number
-): Promise<{ ok: true; best: ScoreBest }> {
-  return post(api("/api/leaderboard"), { runId, runValue, depth, kind, ...(net === undefined ? {} : { net }) });
+  opts: { net: number; difficulty: "mild" | "normal" | "hardcore" }
+): Promise<{ ok: true; best: ScoreBest; inserted: number }> {
+  return post(api("/api/leaderboard"), { runId, runValue, depth, net: opts.net, difficulty: opts.difficulty });
 }

@@ -11,13 +11,14 @@ import LeaderboardScreen from "./LeaderboardScreen";
 import AuthModal from "./AuthModal";
 import { apiLogout, apiMe, apiSubmitScore, apiFetchSave, apiUploadSave, AuthUser } from "@/lib/api";
 
-type ScoreSubmit = { runId: string; value: number; depth: number };
+type ScoreSubmit = { runId: string; value: number; depth: number; net: number; difficulty: "mild" | "normal" | "hardcore" };
 
 export default function GameApp() {
   const [save, setSave] = useState<SaveData>(() => loadSave());
   const [inRun, setInRun] = useState(false);
   const [runStartDepth, setRunStartDepth] = useState(0);
   const [runConfig, setRunConfig] = useState<RunConfig | null>(null);
+  const [runCost, setRunCost] = useState(0); // v7：本局出发花费（净收益 = 入库价值 - 出发花费）
   const [showUpgrades, setShowUpgrades] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -78,6 +79,9 @@ export default function GameApp() {
   // 登录后拉取云端存档：云端比本地新则覆盖本地；否则保留本地（稍后自动上传）
   useEffect(() => {
     if (!user) return;
+    // v7：切换账号时重置同步门闩与已上传快照，防止旧账号/游客存档串号覆盖
+    cloudSyncedRef.current = false;
+    lastUploadedKeyRef.current = null;
     let cancelled = false;
     apiFetchSave()
       .then(({ save: cloud, updatedAt }) => {
@@ -125,9 +129,10 @@ export default function GameApp() {
 
 
 
-  const startRun = useCallback((depth: number, config: RunConfig) => {
+  const startRun = useCallback((depth: number, config: RunConfig, cost = 0) => {
     setRunStartDepth(depth);
     setRunConfig(config);
+    setRunCost(cost);
     setSubmitState("idle");
     setPendingScore(null);
     // 每局唯一 run ID：用于排行榜幂等提交（同一局不会重复上榜）
@@ -144,11 +149,14 @@ export default function GameApp() {
     async (result: RunResult) => {
       setSave(result.save);
       if (result.kind === "surfaced" && result.banked > 0) {
-        setPendingScore({ runId, value: result.banked, depth: result.depth });
+        // v7：一次提交写入全部派生榜（价值/最深/净收益，硬核另写硬核榜）
+        const net = result.banked - runCost;
+        const difficulty = result.difficulty;
+        setPendingScore({ runId, value: result.banked, depth: result.depth, net, difficulty });
         if (user) {
           setSubmitState("submitting");
           try {
-            await apiSubmitScore(runId, result.banked, result.depth);
+            await apiSubmitScore(runId, result.banked, result.depth, { net, difficulty });
             setSubmitState("done");
             showToast("成绩已上榜！");
           } catch {
@@ -160,7 +168,7 @@ export default function GameApp() {
         }
       }
     },
-    [user, showToast, runId]
+    [user, showToast, runId, runCost]
   );
 
   const handleLogin = useCallback(
@@ -172,7 +180,7 @@ export default function GameApp() {
       // 登录成功后提交待处理成绩
       if (pendingScore) {
         setSubmitState("submitting");
-        apiSubmitScore(pendingScore.runId, pendingScore.value, pendingScore.depth)
+        apiSubmitScore(pendingScore.runId, pendingScore.value, pendingScore.depth, { net: pendingScore.net, difficulty: pendingScore.difficulty })
           .then(() => {
             setSubmitState("done");
             showToast("成绩已上榜！");
@@ -195,6 +203,8 @@ export default function GameApp() {
       /* ignore */
     }
     setUser(null);
+    cloudSyncedRef.current = false;
+    lastUploadedKeyRef.current = null;
     showToast("已退出登录");
   }, [showToast]);
 

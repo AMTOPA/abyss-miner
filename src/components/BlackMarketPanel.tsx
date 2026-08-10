@@ -22,8 +22,8 @@ export default function BlackMarketPanel({ view, onSell, onBuy, onRefresh, onRep
 
   // 查看背包里指定矿石堆的数量
   const haveOre = (key: string): number => {
-    const slot = view.bag.find((b) => b.key === key);
-    return slot ? slot.count : 0;
+    // v7：汇总所有同 key 堆的数量（同种矿石可能分散在多格）
+    return view.bag.filter((b) => b.key === key).reduce((sum, b) => sum + b.count, 0);
   };
 
   return (
@@ -47,7 +47,7 @@ export default function BlackMarketPanel({ view, onSell, onBuy, onRefresh, onRep
           ) : (
             <div className="bm-sell-list">
               {oreSlots.map((slot) => (
-                <div key={slot.key} className="bm-sell-row" style={{ borderColor: slot.color }}>
+                <div key={slot.slotId} className="bm-sell-row" style={{ borderColor: slot.color }}>
                   <span className="bag-icon">{slot.quality ? ORE_QUALITIES[slot.quality].icon : "🪨"}</span>
                   <span className="bm-sell-name">
                     {slot.name}
@@ -59,10 +59,10 @@ export default function BlackMarketPanel({ view, onSell, onBuy, onRefresh, onRep
                     <span className="bm-sell-total">（共 {fmt(Math.round(slot.value * view.sellRatio))}）</span>
                   </span>
                   <span className="bm-sell-actions">
-                    <button className="btn btn-sm btn-secondary" disabled={slot.count < 1} onClick={() => onSell(slot.key, 1)}>
+                    <button className="btn btn-sm btn-secondary" disabled={slot.count < 1} onClick={() => onSell(slot.slotId, 1)}>
                       卖1
                     </button>
-                    <button className="btn btn-sm btn-secondary" disabled={slot.count < 1} onClick={() => onSell(slot.key, slot.count)}>
+                    <button className="btn btn-sm btn-secondary" disabled={slot.count < 1} onClick={() => onSell(slot.slotId, slot.count)}>
                       全卖
                     </button>
                   </span>

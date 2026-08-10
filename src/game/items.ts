@@ -104,7 +104,12 @@ export function scaleStats(stats: Partial<EquipmentStats>, tier: ItemTier): Part
   const out: Partial<EquipmentStats> = {};
   for (const k of Object.keys(EMPTY_EQUIP_STATS) as Array<keyof EquipmentStats>) {
     const v = stats[k];
-    if (v) out[k] = Math.round(v * mult);
+    if (v) {
+      let scaled = Math.round(v * mult);
+      // v7：减免类属性钳制在 0..90%，避免极品装备叠加超过 100% 导致公式反向（越钻耐久越高/被勒索反赚钱）
+      if (k === "wearReduce" || k === "banditReduce" || k === "anomalyResist") scaled = Math.max(0, Math.min(90, scaled));
+      out[k] = scaled;
+    }
   }
   return out;
 }

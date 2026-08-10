@@ -9,6 +9,10 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
+  // v7：防御 null / 数组等异常 JSON 体
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
+  }
   const username = (body.username ?? "").trim();
   const password = body.password ?? "";
   const user = findUserByUsername(username);

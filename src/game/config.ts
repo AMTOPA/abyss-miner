@@ -126,15 +126,15 @@ export function supportStats(level: number) {
 export const CHECKPOINTS = [0, 100, 300, 600, 1000];
 // ---------- 撤离点（v6：搜打撤） ----------
 // 固定撤离点：每 100m 偏移 50m（避开检查点营地 100/300/600/1000）
-export const EVAC_DEPTHS = [50, 150, 250, 350, 450, 550, 650, 750, 850, 950];
-// 特殊撤离点（需缴纳随身现金，收益更高）
-export const SPECIAL_EVAC_DEPTHS = [250, 550, 850];
-
+// ---------- 撤离点（v6：搜打撤） ----------
+// 撤离点按公式生成：所有 depth % 100 === 50 的深度（50/150/…/950/1050/1150…），
+// 这样任何检查点（含 1000m）之后都能在可预告的下一撤离点安全结算。
 export function isEvacDepth(depth: number): boolean {
-  return EVAC_DEPTHS.includes(depth);
+  return depth > 0 && depth % 100 === 50;
 }
+// 特殊撤离点（需缴纳随身现金，收益更高）：每 300m 一个（250/550/850/1150…）
 export function isSpecialEvacDepth(depth: number): boolean {
-  return SPECIAL_EVAC_DEPTHS.includes(depth);
+  return depth > 0 && depth % 300 === 250;
 }
 export function evacCost(depth: number): number {
   return Math.round(80 + depth * 0.6);

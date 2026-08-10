@@ -30,6 +30,10 @@ export async function PUT(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
   }
+  // v7：防御 null / 数组等异常 JSON 体
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "请求格式错误" }, { status: 400 });
+  }
   if (!body.save || typeof body.save !== "object") {
     return NextResponse.json({ error: "存档数据无效" }, { status: 400 });
   }

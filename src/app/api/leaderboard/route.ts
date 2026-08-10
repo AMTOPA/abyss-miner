@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import {
   addScoreIdempotent,
@@ -15,6 +15,15 @@ const RATE_MAX = 20;
 const MAX_RUN_VALUE = 1e9;
 const MAX_DEPTH = 1e5;
 const MAX_ABS_NET = 1e9;
+const DIFFICULTIES = ["mild", "normal", "hardcore"] as const;
+type Difficulty = (typeof DIFFICULTIES)[number];
+
+// v7：一次结算写入多个派生榜（价值/最深/净收益，硬核模式另写硬核榜）
+function kindsFor(difficulty: Difficulty | null): ScoreKind[] {
+  const kinds: ScoreKind[] = ["value", "depth", "net"];
+  if (difficulty === "hardcore") kinds.push("hardcore");
+  return kinds;
+}
 
 export async function GET(req: NextRequest) {
   const limitParam = req.nextUrl.searchParams.get("limit");
@@ -50,13 +59,14 @@ export async function POST(req: NextRequest) {
   const runId = typeof body.runId === "string" ? body.runId.trim() : "";
   const runValue = body.runValue;
   const depth = body.depth;
-  const kind: unknown = body.kind === undefined ? "value" : body.kind;
+  const difficultyRaw: unknown = body.difficulty === undefined ? "normal" : body.difficulty;
+  const net = body.net;
 
   if (!RUN_ID_RE.test(runId)) {
     return NextResponse.json({ error: "runId 格式无效" }, { status: 400 });
   }
-  if (!isScoreKind(kind)) {
-    return NextResponse.json({ error: "排行榜类型无效" }, { status: 400 });
+  if (!DIFFICULTIES.includes(difficultyRaw as Difficulty)) {
+    return NextResponse.json({ error: "难度无效" }, { status: 400 });
   }
   if (
     typeof runValue !== "number" ||
@@ -70,9 +80,12 @@ export async function POST(req: NextRequest) {
   ) {
     return NextResponse.json({ error: "成绩数据无效" }, { status: 400 });
   }
-
-  const netValidation = validateNet(kind, body.net, runValue);
-  if (!netValidation.ok) {
+  if (
+    typeof net !== "number" ||
+    !Number.isInteger(net) ||
+    !Number.isFinite(net) ||
+    Math.abs(net) > MAX_ABS_NET
+  ) {
     return NextResponse.json({ error: "净收益数据无效" }, { status: 400 });
   }
 
@@ -81,19 +94,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "提交过于频繁，请稍后再试" }, { status: 429 });
   }
 
-  addScoreIdempotent(user.id, runValue, depth, runId, kind, netValidation.value);
-  const best = getUserBest(user.id, kind);
-  return NextResponse.json({ ok: true, best });
-}
-
-function validateNet(
-  kind: ScoreKind,
-  rawNet: unknown,
-  runValue: number
-): { ok: true; value: number } | { ok: false } {
-  if (kind !== "net") return { ok: true, value: runValue };
-  if (typeof rawNet !== "number" || !Number.isInteger(rawNet) || Math.abs(rawNet) > MAX_ABS_NET) {
-    return { ok: false };
+  const difficulty = difficultyRaw as Difficulty;
+  let inserted = 0;
+  for (const kind of kindsFor(difficulty)) {
+    if (addScoreIdempotent(user.id, runValue, depth, runId, kind, kind === "net" ? net : runValue)) inserted++;
   }
-  return { ok: true, value: rawNet };
+  // 该局若已存在（重复 runId），视为幂等成功，不重复计数
+  const best = getUserBest(user.id, "value");
+  return NextResponse.json({ ok: true, inserted, best });
 }

@@ -39,7 +39,8 @@ function sanitizeRecord(v: unknown): Record<string, number> {
 function normalizeEquipment(e: unknown): EquipmentInstance {
   const raw = (e ?? {}) as Record<string, unknown>;
   const uid = typeof raw.uid === "string" && raw.uid ? (raw.uid as string) : "eq_" + Math.random().toString(36).slice(2, 10);
-  const id = typeof raw.id === "string" ? (raw.id as string) : "drill_bit_1";
+  // v7：校验装备 ID 存在，避免损坏存档/未知 ID 让大厅摘要崩溃；未知 ID 回退为最基础钻头
+  const id = typeof raw.id === "string" && EQUIPMENT_DEFS[raw.id] ? (raw.id as string) : "drill_bit_1";
   const slot = (["drill", "pack", "armor", "detector", "charm"].includes(raw.slot as string) ? raw.slot : "drill") as EquipmentInstance["slot"];
   const tier = (raw.tier === 2 || raw.tier === 3 ? raw.tier : 1) as 1 | 2 | 3;
   let stats: Partial<Record<string, number>> = {};
@@ -47,7 +48,12 @@ function normalizeEquipment(e: unknown): EquipmentInstance {
     const s = raw.stats as Record<string, unknown>;
     for (const k of ["qualityBonus", "slotBonus", "wearReduce", "detectorBonus", "accuracyBonus", "pierceBonus", "banditReduce", "valueBonus", "anomalyResist"] as const) {
       const n = Number(s[k]);
-      if (Number.isFinite(n) && n !== 0) (stats as Record<string, number>)[k] = Math.round(n);
+      if (Number.isFinite(n) && n !== 0) {
+        let v = Math.round(n);
+        // v7：减免类属性钳制在 0..90%，防止异常存档触发负倍率
+        if (k === "wearReduce" || k === "banditReduce" || k === "anomalyResist") v = Math.max(0, Math.min(90, v));
+        (stats as Record<string, number>)[k] = v;
+      }
     }
   } else {
     stats = scaleStats(EQUIPMENT_DEFS[id]?.stats ?? {}, tier);

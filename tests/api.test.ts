@@ -1,4 +1,4 @@
-﻿import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -55,7 +55,7 @@ describe("排行榜多榜数据库层", () => {
     const indexes = dbApi.getDb().prepare("PRAGMA index_list(scores)").all() as Array<{ name: string; unique: number }>;
 
     expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining(["kind", "net", "run_id"]));
-    expect(indexes).toEqual(expect.arrayContaining([expect.objectContaining({ name: "idx_scores_run", unique: 1 })]));
+    expect(indexes).toEqual(expect.arrayContaining([expect.objectContaining({ name: "idx_scores_run_kind", unique: 1 })]));
   });
 
   it("按 kind 隔离记录，并按对应指标返回每用户最佳成绩", () => {
@@ -75,14 +75,18 @@ describe("排行榜多榜数据库层", () => {
     expect(depthBoard[0]).toMatchObject({ username: "kind-alice", best: 900, best_depth: 900 });
   });
 
-  it("同一用户重复提交 run_id 时不会重复插入", () => {
+  it("同一 run_id 按 kind 幂等：同榜不重复，不同派生榜可各写一条", () => {
     const userId = createTestUser("idempotent-user");
 
     expect(dbApi.addScoreIdempotent(userId, 100, 10, "duplicate-run-id", "value")).toBe(true);
-    expect(dbApi.addScoreIdempotent(userId, 999, 99, "duplicate-run-id", "net", 500)).toBe(false);
+    // 同一 run_id 再次提交同榜：幂等返回 false（不重复插入）
+    expect(dbApi.addScoreIdempotent(userId, 999, 99, "duplicate-run-id", "value")).toBe(false);
+    // 同一 run_id 写派生榜（net/depth）：允许各写一条
+    expect(dbApi.addScoreIdempotent(userId, 999, 99, "duplicate-run-id", "net", 500)).toBe(true);
+    expect(dbApi.addScoreIdempotent(userId, 999, 99, "duplicate-run-id", "depth")).toBe(true);
 
     const count = dbApi.getDb().prepare("SELECT COUNT(*) AS n FROM scores WHERE user_id = ?").get(userId) as { n: number };
-    expect(Number(count.n)).toBe(1);
+    expect(Number(count.n)).toBe(3);
   });
 
   it("限流计数只包含给定时间点之后的成功提交", () => {
@@ -103,6 +107,8 @@ describe("排行榜多榜数据库层", () => {
   });
 
   it("净收益榜按 net 而不是 run_value 排序", () => {
+    // 清空 scores，确保本测试只包含自己的两个用户（排行榜是全局查询）
+    dbApi.getDb().prepare("DELETE FROM scores").run();
     const highValue = createTestUser("net-high-value");
     const highNet = createTestUser("net-high-net");
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ARCHETYPES, ARCHETYPE_ORDER } from "@/game/content";
+import { ARCHETYPES, ARCHETYPE_ORDER, CHALLENGE_DEFS, CHALLENGE_ORDER } from "@/game/content";
 import { CHECKPOINTS, checkpointCost, fmt, persistSave, type SaveData } from "@/game/config";
 import type { AuthUser } from "@/lib/api";
 import type { ArchetypeId, ChallengeId, DisasterMode, RunConfig } from "@/game/types";
@@ -48,12 +48,11 @@ const TABS: Array<{ id: LobbyTab; name: string; icon: string }> = [
   { id: "settings", name: "设置", icon: "⚙️" },
 ];
 const EQUIP_SLOTS: EquipmentSlot[] = ["drill", "pack", "armor", "detector", "charm"];
-const CHALLENGES: ChallengeDef[] = [
-  { id: "no_checkpoint", name: "断绝退路", desc: "禁用前进营地与检查点收益。", icon: "🚫" },
-  { id: "no_blackmarket", name: "黑市封锁", desc: "本局不会出现黑市交易机会。", icon: "🔒" },
-  { id: "limited_gear", name: "轻装下潜", desc: "装备能力受到限制，资源更紧张。", icon: "🎒" },
-  { id: "abyssal_seed", name: "深渊种子", desc: "使用更危险、但可复现的深渊布局。", icon: "🌀" },
-];
+// v7：词缀名称/描述以 content.ts 正式定义为单一数据源，避免规则漂移
+const CHALLENGES: ChallengeDef[] = CHALLENGE_ORDER.map((id) => {
+  const def = CHALLENGE_DEFS[id];
+  return { id, name: def.name, desc: def.desc, icon: def.icon };
+});
 
 function statLines(stats: EquipmentStats): string[] {
   const out: string[] = [];
@@ -136,7 +135,8 @@ export default function LobbyScreen(props: LobbyProps) {
   const canAfford = save.cash >= totalCost + pocketShown;
   const pocketCan = maxPocket > 0;
   const equippedList = save.warehouseEquipment.filter((item) => save.equipped[item.slot] === item.uid);
-  const equipStats = mergeEquipStats(...equippedList.map((item) => EQUIPMENT_DEFS[item.id].stats));
+  // v7：摘要读取装备实例实际属性（tier 缩放后），不再读取定义基准值
+  const equipStats = mergeEquipStats(...equippedList.map((item) => item.stats));
   const equipLines = statLines(equipStats);
   const recommendedArchetype = defaultArchetype(save);
 
@@ -208,7 +208,8 @@ export default function LobbyScreen(props: LobbyProps) {
       difficulty,
       pocket: pocketShown,
       buffs,
-      equipment: equippedList,
+      // v7：挑战「轻装出发」最多携带 2 件装备
+      equipment: challenge.includes("limited_gear") ? equippedList.slice(0, 2) : equippedList,
       items: carried,
       archetype,
       seed: makeSeed(seedMode),

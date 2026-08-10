@@ -21,6 +21,7 @@ export type RunPhase =
 export type LogEntry = { text: string; kind: "info" | "good" | "bad" | "warn" };
 
 export type BagSlot = {
+  slotId: string;       // v7：格子唯一 ID（同 key 可多堆，操作定位用 slotId）
   key: string;          // ore: `${oreId}:${quality}`  item: `item:${itemId}`
   kind: "ore" | "item";
   id: string;
@@ -254,7 +255,8 @@ export type UiSnapshot = {
     evac: "normal" | "special" | null;   // v6：撤离方式
   } | null;
   log: LogEntry[];
-  drilling: { progress: number; mode: "cautious" | "standard" | "overload"; hardness: number; heat: number; canStop: boolean } | null;
+  drilling: { progress: number; mode: "cautious" | "standard" | "overload"; hardness: number; heat: number; canStop: boolean; canRelease: boolean } | null;
+  canGuaranteedEvac: boolean; // v7：深渊生存者——可消耗 Combo 强制撤离
   canDrill: boolean;
 };
 
@@ -265,6 +267,7 @@ export type RunResult = {
   best: boolean;
   rating: Rating | null;
   bonus: number;
+  difficulty: Difficulty; // v7：用于排行榜硬核榜资格
   save: SaveData;
 };
 

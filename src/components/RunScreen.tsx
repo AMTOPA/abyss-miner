@@ -142,6 +142,17 @@ export default function RunScreen(props: Props) {
     return () => { engine.destroy(); engineRef.current = null; };
   }, []);
 
+  // v7：远征进行中拦截误刷新/关闭，避免无提示丢失本局（已扣除的出发资源不会返还）
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!engineRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
   const act = (fn: (engine: EngineHandle) => void) => {
     const engine = engineRef.current;
     if (!engine) return;

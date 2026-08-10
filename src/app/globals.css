@@ -2669,6 +2669,8 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
   .run-screen .mobile-action-bar .drill-btn { min-height: 52px; }
   .run-screen .mobile-action-bar .dock-secondary { overflow-x: auto; justify-content: flex-start; }
   .run-screen .mobile-action-bar .dock-secondary .btn { min-width: 104px; }
+  .run-screen .no-evac-hint { width: 100%; white-space: normal; }
+  .run-screen .guaranteed-evac-row { flex-direction: column; align-items: stretch; }
 
   .run-screen .stage-overlay {
     align-items: flex-start;
@@ -2825,13 +2827,27 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 14px; border-radius: 12px;
   font-size: 13px; color: #fbbf24; background: rgba(251, 191, 36, 0.08);
-  border: 1px dashed rgba(251, 191, 36, 0.35); white-space: nowrap;
+  border: 1px dashed rgba(251, 191, 36, 0.35); white-space: normal; max-width: 100%;
+}
+@media (min-width: 601px) {
+  .no-evac-hint { white-space: nowrap; }
 }
 
 .btn-special-evac {
   background: linear-gradient(135deg, #8a5fd6, #54338f);
   border-color: rgba(199, 125, 255, 0.55);
   color: #f3eaff;
+}
+.btn-guaranteed-evac {
+  background: linear-gradient(135deg, #c77dff, #7c3aed);
+  border-color: rgba(199, 125, 255, 0.6);
+  color: #f6efff;
+  box-shadow: 0 0 10px rgba(199, 125, 255, 0.25);
+}
+.guaranteed-evac-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 8px; padding: 8px 10px; border: 1px dashed rgba(199, 125, 255, 0.4);
+  border-radius: 12px; background: rgba(199, 125, 255, 0.07);
 }
 .disaster-gauge-card {
   margin-top: 10px;
