@@ -38,6 +38,7 @@ interface NoiseOpts {
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private volume = 1; // v8：主音量 0..1（静音时强制 0）
   private limiter: DynamicsCompressorNode | null = null;
   private ambientNodes: { stop: () => void } | null = null;
   private drillNodes: { stop: () => void } | null = null;
@@ -53,7 +54,7 @@ export class AudioEngine {
       this.ctx = new Ctor();
       const ctx = this.ctx;
       this.master = ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.5;
+      this.master.gain.value = this.muted ? 0 : 0.5 * this.volume;
       // 轻压缩：让灾难/事故等大动态音效更厚实，同时防止削波
       try {
         this.limiter = ctx.createDynamicsCompressor();
@@ -71,10 +72,17 @@ export class AudioEngine {
     }
   }
 
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : 0.5 * this.volume, this.ctx.currentTime, 0.02);
+  }
+
+  getVolume(): number { return this.volume; }
+
   setMuted(m: boolean): void {
     this.muted = m;
     if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(m ? 0 : 0.5, this.ctx.currentTime, 0.02);
+      this.master.gain.setTargetAtTime(m ? 0 : 0.5 * this.volume, this.ctx.currentTime, 0.02);
     }
   }
 

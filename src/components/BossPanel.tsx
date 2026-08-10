@@ -31,7 +31,7 @@ export default function BossPanel({ boss, onAction }: Props) {
       </div>
       <div className="boss-action-list">
         {boss.actions.map((action) => (
-          <button key={action.id} type="button" className="boss-action" onClick={() => onAction(action.id)}>
+          <button key={action.id} type="button" className="boss-action" disabled={action.id === "bribe" && boss.canBribe === false} title={action.id === "bribe" && boss.canBribe === false ? "背包中没有矿石，无法投掷" : undefined} onClick={() => onAction(action.id)}>
             <span className="boss-action-icon">{action.icon}</span>
             <span className="boss-action-copy">
               <span className="boss-action-label">{action.label}</span>

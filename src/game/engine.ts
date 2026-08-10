@@ -202,6 +202,7 @@ export class MinerGame {
   private floatTexts: FloatText[] = [];
   private shake = 0;
   private flash = 0;
+  private reduceMotion = false; // v8：设置-减少动态（减弱震屏/闪光/粒子）
   private flashColor = "#ffffff";
   private time = 0;
   private phaseTimer = 0;
@@ -275,6 +276,7 @@ export class MinerGame {
     this.disasterGuardLayers = 0;
     this.nextTransparent = false;
     this.runEnded = false;
+    this.reduceMotion = !!save.settings?.reduceMotion;
     this.minedThisRun = 0;
     this.scaredThisRun = 0;
     this.canBlackMarket = false;
@@ -1112,6 +1114,9 @@ export class MinerGame {
   }
 
   // v7：所有层生成统一走同一精度口径（含流派精度加成），避免多路径参数漂移
+  // v8：减少动态时粒子规模缩到 25%
+  private particleMult(): number { return this.reduceMotion ? 0.25 : 1; }
+
   private currentAccuracy(): number {
     const det = detectionStats(this.save.upgrades.detection);
     return Math.min(1, det.accuracy + this.equipStats.accuracyBonus / 100 + this.accuracyBonusRun / 100);
@@ -1563,6 +1568,12 @@ export class MinerGame {
         this.logAdd("闪避失败，被巨兽扫中", "bad");
       }
     } else if (actionId === "bribe") {
+      if (this.loadValue <= 0) {
+        this.logAdd("背包里没有矿石，无法投掷", "bad");
+        this.audio.play("warning");
+        this.pushUi();
+        return;
+      }
       const lost = this.removeOreValue(0.1);
       dmg = 70;
       this.logAdd(`投掷矿石吸引注意（损失 ${fmt(lost)}），趁机猛攻`, "warn");
@@ -2206,7 +2217,7 @@ export class MinerGame {
       this.overloadUsedThisRun++;
       this.save.stats.overloadDrills++;
     }
-    if (mode === "cautious") this.cautiousCooldown = 1;
+    if (mode === "cautious") this.cautiousCooldown = 2; // v8：冷却跨过下一层，防止连续稳妥
 
     this.unlockCheckpoints();
     const d = this.ensureDaily();
@@ -2305,7 +2316,7 @@ export class MinerGame {
     }
     this.floatTexts = this.floatTexts.filter((f) => f.life > 0);
 
-    if (Math.random() < dt * 8) {
+    if (Math.random() < dt * 8 * this.particleMult()) {
       this.particles.push({
         x: Math.random() * this.w, y: this.h + 10,
         vx: (Math.random() - 0.5) * 8, vy: -(10 + Math.random() * 20),
@@ -2313,7 +2324,7 @@ export class MinerGame {
         color: "rgba(200,180,150,0.35)", type: "dust",
       });
     }
-    if (this.layer?.stage === "magma" && Math.random() < dt * 6) {
+    if (this.layer?.stage === "magma" && Math.random() < dt * 6 * this.particleMult()) {
       this.particles.push({
         x: Math.random() * this.w, y: this.h,
         vx: (Math.random() - 0.5) * 14, vy: -(30 + Math.random() * 40),
@@ -2322,7 +2333,7 @@ export class MinerGame {
       });
     }
 
-    if (this.phase !== "drilling" && this.phase !== "observe" && Math.random() < dt * 6) {
+    if (this.phase !== "drilling" && this.phase !== "observe" && Math.random() < dt * 6 * this.particleMult()) {
       this.particles.push({
         x: this.w / 2 + (Math.random() - 0.5) * 90, y: this.rockFaceY() + 4,
         vx: (Math.random() - 0.5) * 24, vy: 30 + Math.random() * 50,
@@ -2330,7 +2341,7 @@ export class MinerGame {
         color: "#9c8f7c", type: "debris", grav: 130,
       });
     }
-    if (this.rockSwoosh > 0.4 && Math.random() < dt * 40) {
+    if (this.rockSwoosh > 0.4 && Math.random() < dt * 40 * this.particleMult()) {
       this.particles.push({
         x: this.w / 2 + (Math.random() - 0.5) * 140, y: this.rockFaceY() + (Math.random() - 0.2) * 50,
         vx: (Math.random() - 0.5) * 70, vy: -20 - Math.random() * 70,
@@ -2344,7 +2355,7 @@ export class MinerGame {
       this.wallHole = Math.min(1, this.drillProgress);
       const cx = this.w / 2 + Math.sin(this.time * 40) * 4;
       const cy = this.rockFaceY() - 10;
-      if (Math.random() < dt * 40) {
+      if (Math.random() < dt * 40 * this.particleMult()) {
         this.particles.push({
           x: cx + (Math.random() - 0.5) * 30, y: cy + (Math.random() - 0.5) * 10,
           vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160,
@@ -2352,7 +2363,7 @@ export class MinerGame {
           color: Math.random() < 0.6 ? "#ffd166" : "#ff9f43", type: "spark",
         });
       }
-      if (Math.random() < dt * 14) {
+      if (Math.random() < dt * 14 * this.particleMult()) {
         this.particles.push({
           x: cx + (Math.random() - 0.5) * 40, y: cy + (Math.random() - 0.5) * 20,
           vx: (Math.random() - 0.5) * 120, vy: 40 + Math.random() * 90,
@@ -2427,6 +2438,7 @@ export class MinerGame {
       : "岩浆带深处的巨兽，熔岩甲壳坚硬如铁，必须寻找破绽才能造成重创。";
     return {
       id: b.id, name: b.name, desc, hp: b.hp, maxHp: b.maxHp,
+      canBribe: this.loadValue > 0,
       actions: [
         { id: "drill", label: "正面强攻", desc: "消耗 15 电量、10 耐久，稳定造成 35 点伤害", icon: "⚡" },
         { id: "dodge", label: "伺机闪避", desc: "50% 概率造成 60 点伤害，失败则额外受损", icon: "💨" },
@@ -2580,7 +2592,7 @@ export class MinerGame {
     const w = this.w, h = this.h;
     ctx.save();
     if (this.shake > 0) {
-      ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
+      ctx.translate((Math.random() - 0.5) * this.shake * (this.reduceMotion ? 0.2 : 1), (Math.random() - 0.5) * this.shake * (this.reduceMotion ? 0.2 : 1));
     }
     this.drawBackground(ctx, w, h);
     this.drawCaveSides(ctx, w, h);
@@ -2594,7 +2606,7 @@ export class MinerGame {
     ctx.restore();
     if (this.flash > 0) {
       ctx.fillStyle = this.flashColor;
-      ctx.globalAlpha = this.flash * 0.45;
+      ctx.globalAlpha = this.flash * 0.45 * (this.reduceMotion ? 0.3 : 1);
       ctx.fillRect(0, 0, w, h);
       ctx.globalAlpha = 1;
     }

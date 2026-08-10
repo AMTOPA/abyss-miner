@@ -24,6 +24,8 @@ export type LobbyProps = {
   save: SaveData;
   user: AuthUser | null;
   muted: boolean;
+  volume: number;
+  onVolume: (v: number) => void;
   onToggleMute: () => void;
   onStart: (startDepth: number, config: RunConfig, cost: number) => void;
   onUpgrades: () => void;
@@ -322,7 +324,37 @@ export default function LobbyScreen(props: LobbyProps) {
   );
 
   const renderLeaderboard = () => <div className="deploy-layout"><section className="deploy-section deploy-actions"><h3 className="deploy-section-title">深渊排行榜</h3><p className="modal-hint">按「单次下矿最高入库价值」排名，登录后成绩自动上榜。</p><button type="button" className="btn btn-big btn-primary" onClick={props.onLeaderboard}>🏆 打开排行榜</button></section></div>;
-  const renderSettings = () => <div className="deploy-layout"><section className="deploy-section"><h3 className="deploy-section-title">声音</h3><button type="button" className="btn btn-secondary" onClick={props.onToggleMute}>{muted ? "🔇 开启音效" : "🔊 静音"}</button></section><section className="deploy-section"><h3 className="deploy-section-title">账号</h3>{user ? <div className="user-chip"><span className="user-name">{user.username}</span><button type="button" className="btn btn-danger btn-sm" onClick={props.onLogout}>退出登录</button></div> : <div className="user-chip"><button type="button" className="btn btn-primary btn-sm" onClick={props.onLogin}>登录</button><button type="button" className="btn btn-secondary btn-sm" onClick={props.onRegister}>注册</button></div>}</section><section className="deploy-section"><h3 className="deploy-section-title">成长</h3><button type="button" className="btn btn-secondary" onClick={props.onUpgrades}>🔧 升级车间</button></section></div>;
+const renderSettings = () => (
+    <div className="deploy-layout">
+      <section className="deploy-section">
+        <h3 className="deploy-section-title">声音</h3>
+        <div className="settings-row">
+          <button type="button" className="btn btn-secondary" onClick={props.onToggleMute}>{muted ? "🔇 开启音效" : "🔊 静音"}</button>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">主音量</span>
+          <input className="settings-range" type="range" min={0} max={100} value={Math.round(props.volume * 100)} onChange={(e) => props.onVolume(Number(e.target.value) / 100)} />
+          <span className="settings-value">{Math.round(props.volume * 100)}%</span>
+        </div>
+      </section>
+      <section className="deploy-section">
+        <h3 className="deploy-section-title">显示</h3>
+        <div className="settings-row">
+          <span className="settings-label">减少动态</span>
+          <button type="button" className={save.settings.reduceMotion ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm"} onClick={() => props.onSave({ ...save, settings: { ...save.settings, reduceMotion: !save.settings.reduceMotion } })}>{save.settings.reduceMotion ? "已开启" : "已关闭"}</button>
+          <span className="settings-hint">降低震屏、闪光与粒子密度</span>
+        </div>
+      </section>
+      <section className="deploy-section">
+        <h3 className="deploy-section-title">账号</h3>
+        {user ? <div className="user-chip"><span className="user-name">{user.username}</span><button type="button" className="btn btn-danger btn-sm" onClick={props.onLogout}>退出登录</button></div> : <div className="user-chip"><button type="button" className="btn btn-primary btn-sm" onClick={props.onLogin}>登录</button><button type="button" className="btn btn-secondary btn-sm" onClick={props.onRegister}>注册</button></div>}
+      </section>
+      <section className="deploy-section">
+        <h3 className="deploy-section-title">成长</h3>
+        <button type="button" className="btn btn-secondary" onClick={props.onUpgrades}>🔧 升级车间</button>
+      </section>
+    </div>
+  );
 
   return (
     <div className="lobby-screen">

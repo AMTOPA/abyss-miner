@@ -2885,3 +2885,14 @@ button:where(.route-card, .room-card, .module-card, .base-card, .archetype-card)
   display: block; margin-top: 6px;
   font-size: 12px; color: #9a8a70;
 }
+
+/* v8：设置页 —— 音量滑块与减少动态 */
+.settings-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 8px 0; padding: 6px 0;
+}
+.settings-label { min-width: 64px; color: #f0dab2; font-size: 14px; }
+.settings-value { min-width: 44px; text-align: right; color: #ffd166; font-size: 13px; font-variant-numeric: tabular-nums; }
+.settings-hint { width: 100%; color: rgba(240,218,178,0.55); font-size: 12px; }
+.settings-range { flex: 1; min-width: 120px; accent-color: #ffd166; }
+.boss-action:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.6); }

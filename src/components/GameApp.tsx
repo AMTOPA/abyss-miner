@@ -25,6 +25,7 @@ export default function GameApp() {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [muted, setMuted] = useState<boolean>(false);
+  const [volume, setVolumeState] = useState<number>(1); // v8：主音量 0..1
   const [pendingScore, setPendingScore] = useState<ScoreSubmit | null>(null);
   const [runId, setRunId] = useState<string>("");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "done" | "needLogin" | "error">("idle");
@@ -194,6 +195,11 @@ export default function GameApp() {
     [pendingScore, showToast]
   );
 
+  const handleVolume = useCallback((v: number) => {
+    setVolumeState(v);
+    audioRef.current?.setVolume(v);
+  }, []);
+
   const handleLogout = useCallback(async () => {
     try {
       // 退出前把当前存档上传一次，确保云端是最新状态
@@ -251,6 +257,8 @@ export default function GameApp() {
           save={save}
           user={user}
           muted={muted}
+          volume={volume}
+          onVolume={handleVolume}
           onToggleMute={() => setMuted((m) => !m)}
           onStart={startRun}
           onUpgrades={() => {

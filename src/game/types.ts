@@ -138,6 +138,7 @@ export type BossView = {
   hp: number;
   maxHp: number;
   actions: BossAction[];
+  canBribe: boolean; // v8：背包有矿石才允许投掷（防空包白嫖）
 };
 
 export type BossAction = { id: string; label: string; desc: string; icon: string };

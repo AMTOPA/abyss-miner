@@ -139,7 +139,7 @@ export default function RunScreen(props: Props) {
     const engine = new Ctor(canvas, current.save, current.audio, { onUi: setSnap, onRunEnd: (result) => propsRef.current.onRunEnd(result) });
     engineRef.current = engine;
     engine.startRun(current.startDepth, current.save, current.runConfig);
-    return () => { engine.destroy(); engineRef.current = null; };
+    return () => { engine.destroy(); engineRef.current = null; propsRef.current.audio.stopAmbient(); };
   }, []);
 
   // v7：远征进行中拦截误刷新/关闭，避免无提示丢失本局（已扣除的出发资源不会返还）

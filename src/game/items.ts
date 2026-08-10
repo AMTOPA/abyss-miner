@@ -1,6 +1,7 @@
 // ---------- v2 物品/品质/难度/黑市数据模型 ----------
 import { ORES, baseOreValue } from "./config";
 import type { OreId } from "./config";
+import { TRAITS } from "./content";
 import type { TraitId } from "./content";
 
 // ================= 矿石品质 =================
@@ -174,7 +175,7 @@ function equip(
   id: string, name: string, icon: string, slot: EquipmentSlot, tier: ItemTier,
   stats: Partial<EquipmentStats>, basePrice: number, trait?: TraitId
 ): ItemDef {
-  const extra = trait ? " · 特性：「" + trait + "」" : "";
+  const extra = trait && TRAITS[trait] ? " · 特性：「" + TRAITS[trait].name + "」" : "";
   return { id, name, icon, kind: "equipment", desc: equipDesc(slot, tier, stats) + extra, basePrice, color: TIER_COLORS[tier], slot, tier, stats, trait };
 }
 
@@ -246,6 +247,10 @@ export function equipInstanceDesc(inst: EquipmentInstance): string {
   if (s.banditReduce) parts.push("强盗损失 -" + s.banditReduce + "%");
   if (s.valueBonus) parts.push("价值 +" + s.valueBonus + "%");
   if (s.anomalyResist) parts.push("异常抗性 +" + s.anomalyResist + "%");
+  const def = EQUIPMENT_DEFS[inst.id];
+  if (def?.trait && TRAITS[def.trait]) {
+    parts.push("✦ " + TRAITS[def.trait].name + "：" + TRAITS[def.trait].desc);
+  }
   return "[" + TIER_NAMES[inst.tier] + "] " + (parts.length ? parts.join(" · ") : "无特殊属性");
 }
 
